@@ -10,7 +10,6 @@ on:
 
 jobs:
   test:
-    name: Rust project
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -20,6 +19,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
+
   linux:
     runs-on: ubuntu-latest
     steps:
