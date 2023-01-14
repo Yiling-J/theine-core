@@ -34,18 +34,27 @@ impl TinyLfu {
 
     // add/update key
     fn set(&mut self, key: &str) -> Option<String> {
+        self.key_mapping.insert(key.to_string(), 0);
         let candidate = self.lru.set(key);
         if let Some(i) = candidate {
+            self.key_mapping.remove(&i.to_string());
             let victim = self.slru.victim();
             if let Some(j) = victim {
                 let candidate_count = self.sketch.estimate(self.hasher.hash_one(i.to_string()));
                 let victim_count = self.sketch.estimate(self.hasher.hash_one(j));
-                if candidate_count > victim_count {
-                    return self.slru.set(&i);
+                // candicate is evicated
+                if candidate_count <= victim_count {
+                    return Some(i);
                 }
-                return Some(i);
             }
-            return self.slru.set(&i);
+            // candicate is admitted, insert to slru
+            self.key_mapping.insert(i.to_string(), 1);
+            let e = self.slru.set(&i);
+            // e is the evicated one from slru, is exists
+            if let Some(j) = e {
+                self.key_mapping.remove(&j);
+                return Some(j);
+            }
         }
         None
     }
@@ -84,5 +93,50 @@ impl TinyLfu {
                 _ => unreachable!(),
             };
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TinyLfu;
+
+    #[test]
+    fn test_tlfu() {
+        let mut tlfu = TinyLfu::new(1000);
+        assert_eq!(tlfu.lru.size(), 10);
+        assert_eq!(tlfu.slru.probation_size(), 990);
+        assert_eq!(tlfu.slru.protected_size(), 792);
+        assert_eq!(tlfu.slru.probation_len(), 0);
+        assert_eq!(tlfu.slru.protected_len(), 0);
+
+        for i in 0..200 {
+            let evicated = tlfu.set(&format!("key:{}", i));
+            assert!(evicated.is_none());
+        }
+        assert_eq!(tlfu.lru.len(), 10);
+        assert_eq!(tlfu.slru.probation_len(), 190);
+        assert_eq!(tlfu.slru.protected_len(), 0);
+
+        // access same key will move the key from probation tp protected
+        tlfu.access("key:10");
+        assert_eq!(tlfu.lru.len(), 10);
+        assert_eq!(tlfu.slru.probation_len(), 189);
+        assert_eq!(tlfu.slru.protected_len(), 1);
+        // access again, length should be same
+        tlfu.access("key:10");
+        assert_eq!(tlfu.lru.len(), 10);
+        assert_eq!(tlfu.slru.probation_len(), 189);
+        assert_eq!(tlfu.slru.protected_len(), 1);
+        // fill rlfu
+        for i in 200..1000 {
+            tlfu.set(&format!("key:{}", i));
+        }
+        // set again, should evicate one
+        let evicated = tlfu.set("key:0a");
+        // lru size is 10, and last 10 is 990-1000, so evicate 990
+        assert_eq!(evicated.unwrap(), "key:990");
+        assert_eq!(tlfu.lru.len(), 10);
+        assert_eq!(tlfu.slru.probation_len(), 988);
+        assert_eq!(tlfu.slru.protected_len(), 1);
     }
 }

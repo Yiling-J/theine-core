@@ -34,6 +34,14 @@ impl Lru {
     pub fn access(&mut self, key: &str) {
         self.lru.demote(key);
     }
+
+    pub fn size(&self) -> usize {
+        self.lru.cap().get()
+    }
+
+    pub fn len(&self) -> usize {
+        self.lru.len()
+    }
 }
 
 pub struct Slru {
@@ -47,8 +55,8 @@ impl Slru {
         let protected_cap = (maxsize as f64 * 0.8) as usize;
         Slru {
             maxsize,
-            protected: LruCache::new(NonZeroUsize::new(maxsize).unwrap()),
-            probation: LruCache::new(NonZeroUsize::new(protected_cap).unwrap()),
+            protected: LruCache::new(NonZeroUsize::new(protected_cap).unwrap()),
+            probation: LruCache::new(NonZeroUsize::new(maxsize).unwrap()),
         }
     }
 
@@ -101,5 +109,21 @@ impl Slru {
             2 => self.protected.pop(key),
             _ => unreachable!(),
         };
+    }
+
+    pub fn protected_size(&self) -> usize {
+        self.protected.cap().get()
+    }
+
+    pub fn protected_len(&self) -> usize {
+        self.protected.len()
+    }
+
+    pub fn probation_size(&self) -> usize {
+        self.probation.cap().get()
+    }
+
+    pub fn probation_len(&self) -> usize {
+        self.probation.len()
     }
 }

@@ -97,10 +97,11 @@ mod tests {
         assert_eq!(sketch.row_mask, 511);
         // 32 uint64 * 4 rows
         assert_eq!(sketch.table.len(), 128);
+        assert_eq!(sketch.sample_size, 5120);
 
         let hasher = RandomState::new();
         let mut failed = 0;
-        for i in 0..1000 {
+        for i in 0..500 {
             let key = format!("foo:bar:{}", i);
             let h = hasher.hash_one(key);
             sketch.add(h);
@@ -121,7 +122,12 @@ mod tests {
             }
             assert!(es1 >= 5);
             assert!(es2 >= 3);
-            assert!(failed as f64 / 8000.0 < 0.1);
         }
+        assert!(failed as f64 / 4000.0 < 0.1);
+        assert!(sketch.additions > 3900);
+        let a = sketch.additions;
+
+        sketch.reset();
+        assert_eq!(sketch.additions, a >> 1);
     }
 }
