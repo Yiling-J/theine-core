@@ -131,12 +131,31 @@ mod tests {
         for i in 200..1000 {
             tlfu.set(&format!("key:{}", i));
         }
+        assert_eq!(tlfu.lru.len(), 10);
+        assert_eq!(tlfu.slru.probation_len(), 989);
+        assert_eq!(tlfu.slru.protected_len(), 1);
         // set again, should evicate one
         let evicated = tlfu.set("key:0a");
         // lru size is 10, and last 10 is 990-1000, so evicate 990
         assert_eq!(evicated.unwrap(), "key:990");
         assert_eq!(tlfu.lru.len(), 10);
-        assert_eq!(tlfu.slru.probation_len(), 988);
+        assert_eq!(tlfu.slru.probation_len(), 989);
+        assert_eq!(tlfu.slru.protected_len(), 1);
+        // test estimate
+        let victim = tlfu.slru.victim();
+        assert_eq!(victim.unwrap(), "key:0");
+        tlfu.access("key:991");
+        tlfu.access("key:991");
+        tlfu.access("key:991");
+        tlfu.access("key:991");
+        let evicated = tlfu.set("key:1a");
+        assert_eq!(evicated.unwrap(), "key:0");
+
+        for i in 0..1000 {
+            tlfu.set(&format!("key:{}:b", i));
+        }
+        assert_eq!(tlfu.lru.len(), 10);
+        assert_eq!(tlfu.slru.probation_len(), 989);
         assert_eq!(tlfu.slru.protected_len(), 1);
     }
 }

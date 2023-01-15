@@ -61,9 +61,15 @@ impl Slru {
     }
 
     pub fn set(&mut self, key: &str) -> Option<String> {
-        let evicated = self.probation.push(key.to_string(), ());
-        if let Some(i) = evicated {
-            if i.0 != key {
+        if self.protected.len() + self.probation.len() >= self.maxsize {
+            let evicated = self.probation.pop_lru();
+            self.probation.push(key.to_string(), ());
+            if let Some(i) = evicated {
+                return Some(i.0);
+            }
+        } else {
+            let evicated = self.probation.push(key.to_string(), ());
+            if let Some(i) = evicated {
                 return Some(i.0);
             }
         }
@@ -74,9 +80,9 @@ impl Slru {
         if self.probation.len() + self.protected.len() < self.maxsize {
             return None;
         }
-        let evicated = self.probation.pop_lru();
+        let evicated = self.probation.peek_lru();
         if let Some(i) = evicated {
-            return Some(i.0);
+            return Some(i.0.to_string());
         }
         None
     }
