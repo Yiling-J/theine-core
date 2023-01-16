@@ -1,3 +1,4 @@
+use ahash::RandomState;
 use pyo3::prelude::*;
 
 #[pyclass]
@@ -7,6 +8,7 @@ pub struct BloomFilter {
     slice_count: usize,
     bits: Vec<u64>,
     additions: usize,
+    hasher: RandomState,
 }
 
 #[pymethods]
@@ -25,10 +27,12 @@ impl BloomFilter {
             slice_count: (ln2 * bits as f64 / insertions as f64) as usize,
             bits: vec![0; (bits + 63) / 64],
             additions: 0,
+            hasher: RandomState::new(),
         }
     }
 
-    pub fn put(&mut self, h: u64) {
+    pub fn put(&mut self, key: &str) {
+        let h = self.hasher.hash_one(key);
         self.additions += 1;
         if self.additions == self.insertions {
             self.reset();
@@ -54,7 +58,8 @@ impl BloomFilter {
         self.bits[idx as usize] |= mask;
     }
 
-    pub fn contains(&self, h: u64) -> bool {
+    pub fn contains(&self, key: &str) -> bool {
+        let h = self.hasher.hash_one(key);
         let mut o = true;
         for i in 0..self.slice_count {
             let hash = h + i as u64 * (h >> 32);
@@ -75,23 +80,23 @@ mod tests {
 
     #[test]
     fn test_filter() {
-        let mut bf = BloomFilter::new(100, 0.01);
-        assert_eq!(bf.slice_count, 7);
-        assert_eq!(bf.bits.len(), 16);
-        for i in 0..2000 {
-            let exist = bf.contains(i);
+        let mut bf = BloomFilter::new(100, 0.001);
+        assert_eq!(bf.slice_count, 14);
+        assert_eq!(bf.bits.len(), 32);
+        for i in 0..500 {
+            let exist = bf.contains(&format!("key:{}", i));
             assert!(!exist);
-            bf.put(i);
+            bf.put(&format!("key:{}", i));
         }
         bf.reset();
         for i in 0..40 {
-            let exist = bf.contains(i);
+            let exist = bf.contains(&format!("key:{}", i));
             assert!(!exist);
-            bf.put(i);
+            bf.put(&format!("key:{}", i));
         }
         // test exists
         for i in 0..40 {
-            let exist = bf.contains(i);
+            let exist = bf.contains(&format!("key:{}", i));
             assert!(exist);
         }
     }
