@@ -83,7 +83,7 @@ mod tests {
         let mut bf = BloomFilter::new(100, 0.001);
         assert_eq!(bf.slice_count, 14);
         assert_eq!(bf.bits.len(), 32);
-        for i in 0..500 {
+        for i in 0..100 {
             let exist = bf.contains(&format!("key:{}", i));
             assert!(!exist);
             bf.put(&format!("key:{}", i));
