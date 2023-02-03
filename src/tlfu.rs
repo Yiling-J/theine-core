@@ -113,6 +113,7 @@ mod tests {
             let evicated = tlfu.set(&format!("key:{}", i));
             assert!(evicated.is_none());
         }
+
         assert_eq!(tlfu.lru.len(), 10);
         assert_eq!(tlfu.slru.probation_len(), 190);
         assert_eq!(tlfu.slru.protected_len(), 0);
@@ -157,5 +158,20 @@ mod tests {
         assert_eq!(tlfu.lru.len(), 10);
         assert_eq!(tlfu.slru.probation_len(), 989);
         assert_eq!(tlfu.slru.protected_len(), 1);
+    }
+
+    #[test]
+    fn test_tlfu_set_same() {
+        let mut tlfu = TinyLfu::new(1000);
+
+        for i in 0..200 {
+            let evicated = tlfu.set(&format!("key:{}", i));
+            assert!(evicated.is_none());
+        }
+
+        for i in 0..200 {
+            let evicated = tlfu.set(&format!("key:{}", i));
+            assert!(evicated.is_none());
+        }
     }
 }

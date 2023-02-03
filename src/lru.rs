@@ -70,7 +70,9 @@ impl Slru {
         } else {
             let evicated = self.probation.push(key.to_string(), ());
             if let Some(i) = evicated {
-                return Some(i.0);
+                if i.0 != key {
+                    return Some(i.0);
+                }
             }
         }
         None
