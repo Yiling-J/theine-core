@@ -3,18 +3,15 @@ use crate::{
     timerwheel::{Cache, TimerWheel},
     tlfu::TinyLfu,
 };
-use pyo3::{exceptions::PyException, prelude::*, types::PyDict};
+use pyo3::{prelude::*, types::PyDict};
 
 struct PyDictCache<'a> {
     dict: &'a PyDict,
 }
 
 impl<'a> Cache for PyDictCache<'a> {
-    fn del_item(&mut self, key: &str) -> Result<(), String> {
-        match self.dict.del_item(key) {
-            Ok(_v) => Ok(()),
-            Err(e) => Err(e.to_string()),
-        }
+    fn del_item(&mut self, key: &str) {
+        let _ = self.dict.del_item(key);
     }
 }
 
@@ -40,6 +37,14 @@ impl TlfuCore {
         }
     }
 
+    pub fn schedule(&mut self, key: &str, expire: u128) {
+        self.wheel.schedule(key, expire);
+    }
+
+    pub fn set_policy(&mut self, key: &str) -> Option<String> {
+        self.policy.set(key)
+    }
+
     pub fn set(&mut self, key: &str, expire: u128) -> Option<String> {
         self.wheel.schedule(key, expire);
         self.policy.set(key)
@@ -54,12 +59,9 @@ impl TlfuCore {
         self.policy.access(key);
     }
 
-    pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict) -> PyResult<()> {
+    pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict) {
         let wrapper = &mut PyDictCache { dict: cache };
-        match self.wheel.advance(now, wrapper) {
-            Ok(v) => Ok(v),
-            Err(e) => Err(PyException::new_err(e)),
-        }
+        self.wheel.advance(now, wrapper)
     }
 }
 
@@ -73,6 +75,14 @@ impl LruCore {
         }
     }
 
+    pub fn schedule(&mut self, key: &str, expire: u128) {
+        self.wheel.schedule(key, expire);
+    }
+
+    pub fn set_policy(&mut self, key: &str) -> Option<String> {
+        self.policy.set(key)
+    }
+
     pub fn set(&mut self, key: &str, expire: u128) -> Option<String> {
         self.wheel.schedule(key, expire);
         self.policy.set(key)
@@ -87,11 +97,8 @@ impl LruCore {
         self.policy.access(key);
     }
 
-    pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict) -> PyResult<()> {
+    pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict) {
         let wrapper = &mut PyDictCache { dict: cache };
-        match self.wheel.advance(now, wrapper) {
-            Ok(v) => Ok(v),
-            Err(e) => Err(PyException::new_err(e)),
-        }
+        self.wheel.advance(now, wrapper)
     }
 }

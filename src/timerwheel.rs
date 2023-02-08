@@ -6,7 +6,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 pub trait Cache {
-    fn del_item(&mut self, key: &str) -> Result<(), String>;
+    fn del_item(&mut self, key: &str);
 }
 
 pub struct TimerWheel {
@@ -45,7 +45,7 @@ impl TimerWheel {
         }
     }
 
-    pub fn advance(&mut self, now: u128, cache: &mut impl Cache) -> Result<(), String> {
+    pub fn advance(&mut self, now: u128, cache: &mut impl Cache) {
         let previous = self.nanos;
         self.nanos = now;
 
@@ -55,18 +55,11 @@ impl TimerWheel {
             if current_ticks <= prev_ticks {
                 break;
             }
-            self.expire(i, prev_ticks, current_ticks - prev_ticks, cache)?;
+            self.expire(i, prev_ticks, current_ticks - prev_ticks, cache);
         }
-        Ok(())
     }
 
-    fn expire(
-        &mut self,
-        index: usize,
-        prev_ticks: u128,
-        delta: u128,
-        cache: &mut impl Cache,
-    ) -> Result<(), String> {
+    fn expire(&mut self, index: usize, prev_ticks: u128, delta: u128, cache: &mut impl Cache) {
         let mask = (self.buckets[index] - 1) as u128;
         let steps = cmp::min(delta as usize, self.buckets[index]);
         let start = prev_ticks & mask;
@@ -75,7 +68,7 @@ impl TimerWheel {
             let mut modified: HashMap<String, u128> = HashMap::new();
             for data in self.wheel[index][(i & mask) as usize].iter() {
                 if *data.1 <= self.nanos {
-                    cache.del_item(data.0)?;
+                    cache.del_item(data.0);
                 } else {
                     modified.insert(data.0.to_string(), *data.1);
                 }
@@ -86,7 +79,6 @@ impl TimerWheel {
                 self.schedule(i.0, *i.1);
             }
         }
-        Ok(())
     }
 }
 
@@ -146,9 +138,8 @@ mod tests {
     }
 
     impl Cache for MockCache {
-        fn del_item(&mut self, key: &str) -> Result<(), String> {
-            self.deleted.push(key.to_string());
-            Ok(())
+        fn del_item(&mut self, key: &str) {
+            self.deleted.push(key.to_string())
         }
     }
 
@@ -231,25 +222,15 @@ mod tests {
         tw.schedule("k6", now + Duration::from_secs(142000).as_nanos());
         tw.schedule("k7", now + Duration::from_secs(1420000).as_nanos());
         assert_eq!(tw.keys.len(), 7);
-        assert!(tw
-            .advance(now + Duration::from_secs(64).as_nanos(), cache)
-            .is_ok());
+        tw.advance(now + Duration::from_secs(64).as_nanos(), cache);
         assert_eq!(cache.deleted.len(), 3);
-        assert!(tw
-            .advance(now + Duration::from_secs(200).as_nanos(), cache)
-            .is_ok());
+        tw.advance(now + Duration::from_secs(200).as_nanos(), cache);
         assert_eq!(cache.deleted.len(), 4);
-        assert!(tw
-            .advance(now + Duration::from_secs(12000).as_nanos(), cache)
-            .is_ok());
+        tw.advance(now + Duration::from_secs(12000).as_nanos(), cache);
         assert_eq!(cache.deleted.len(), 5);
-        assert!(tw
-            .advance(now + Duration::from_secs(250000).as_nanos(), cache)
-            .is_ok());
+        tw.advance(now + Duration::from_secs(250000).as_nanos(), cache);
         assert_eq!(cache.deleted.len(), 6);
-        assert!(tw
-            .advance(now + Duration::from_secs(1520000).as_nanos(), cache)
-            .is_ok());
+        tw.advance(now + Duration::from_secs(1520000).as_nanos(), cache);
         assert_eq!(cache.deleted.len(), 7);
     }
 }
