@@ -1,11 +1,9 @@
 use crate::lru::{Lru, Slru};
 use crate::sketch::CountMinSketch;
 use ahash::{AHasher, RandomState};
-use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 
-#[pyclass]
 pub struct TinyLfu {
     lru: Lru,
     slru: Slru,
@@ -14,10 +12,8 @@ pub struct TinyLfu {
     hasher: RandomState,
 }
 
-#[pymethods]
 impl TinyLfu {
-    #[new]
-    fn new(size: usize) -> TinyLfu {
+    pub fn new(size: usize) -> TinyLfu {
         let mut lru_size = (size as f64 * 0.01) as usize;
         if lru_size == 0 {
             lru_size = 1;
@@ -33,7 +29,7 @@ impl TinyLfu {
     }
 
     // add/update key
-    fn set(&mut self, key: &str) -> Option<String> {
+    pub fn set(&mut self, key: &str) -> Option<String> {
         self.key_mapping.insert(key.to_string(), 0);
         let candidate = self.lru.set(key);
         if let Some(i) = candidate {
@@ -60,7 +56,7 @@ impl TinyLfu {
     }
 
     // remove key
-    fn remove(&mut self, key: &str) {
+    pub fn remove(&mut self, key: &str) {
         let e = self.key_mapping.remove(key);
         if let Some(i) = e {
             match i {
@@ -73,7 +69,7 @@ impl TinyLfu {
     }
 
     // mark access, update sketch and lru/slru
-    fn access(&mut self, key: &str) {
+    pub fn access(&mut self, key: &str) {
         self.sketch.add(self.hasher.hash_one(key.to_string()));
         let e = self.key_mapping.get(key);
         if let Some(i) = e {

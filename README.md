@@ -1,2 +1,2 @@
-# cacheme-utils
-cacheme rust utils
+# theine-core
+theine core in Rust

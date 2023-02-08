@@ -1,16 +1,12 @@
 use std::num::NonZeroUsize;
 
 use lru::LruCache;
-use pyo3::prelude::*;
 
-#[pyclass]
 pub struct Lru {
     lru: LruCache<String, ()>, // id is 0
 }
 
-#[pymethods]
 impl Lru {
-    #[new]
     pub fn new(maxsize: usize) -> Lru {
         Lru {
             lru: LruCache::new(NonZeroUsize::new(maxsize).unwrap()),
