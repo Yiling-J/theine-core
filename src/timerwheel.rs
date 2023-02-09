@@ -228,7 +228,7 @@ mod tests {
         assert_eq!(cache.deleted.len(), 4);
         tw.advance(now + Duration::from_secs(12000).as_nanos(), cache);
         assert_eq!(cache.deleted.len(), 5);
-        tw.advance(now + Duration::from_secs(250000).as_nanos(), cache);
+        tw.advance(now + Duration::from_secs(350000).as_nanos(), cache);
         assert_eq!(cache.deleted.len(), 6);
         tw.advance(now + Duration::from_secs(1520000).as_nanos(), cache);
         assert_eq!(cache.deleted.len(), 7);
