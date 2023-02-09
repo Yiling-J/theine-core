@@ -41,6 +41,10 @@ impl TlfuCore {
         self.wheel.schedule(key, expire);
     }
 
+    pub fn deschedule(&mut self, key: &str) {
+        self.wheel.deschedule(key);
+    }
+
     pub fn set_policy(&mut self, key: &str) -> Option<String> {
         self.policy.set(key)
     }
