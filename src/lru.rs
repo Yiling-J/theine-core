@@ -14,8 +14,8 @@ impl Lru {
     }
 
     pub fn set(&mut self, key: &str) -> Option<String> {
-        let evicated = self.lru.push(key.to_string(), ());
-        if let Some(i) = evicated {
+        let evicted = self.lru.push(key.to_string(), ());
+        if let Some(i) = evicted {
             if i.0 != key {
                 return Some(i.0);
             }
@@ -58,14 +58,14 @@ impl Slru {
 
     pub fn set(&mut self, key: &str) -> Option<String> {
         if self.protected.len() + self.probation.len() >= self.maxsize {
-            let evicated = self.probation.pop_lru();
+            let evicted = self.probation.pop_lru();
             self.probation.push(key.to_string(), ());
-            if let Some(i) = evicated {
+            if let Some(i) = evicted {
                 return Some(i.0);
             }
         } else {
-            let evicated = self.probation.push(key.to_string(), ());
-            if let Some(i) = evicated {
+            let evicted = self.probation.push(key.to_string(), ());
+            if let Some(i) = evicted {
                 if i.0 != key {
                     return Some(i.0);
                 }
@@ -78,8 +78,8 @@ impl Slru {
         if self.probation.len() + self.protected.len() < self.maxsize {
             return None;
         }
-        let evicated = self.probation.peek_lru();
-        if let Some(i) = evicated {
+        let evicted = self.probation.peek_lru();
+        if let Some(i) = evicted {
             return Some(i.0.to_string());
         }
         None
@@ -89,8 +89,8 @@ impl Slru {
         match id {
             1 => {
                 self.probation.pop(key);
-                let evicated = self.protected.push(key.to_string(), ());
-                if let Some(i) = evicated {
+                let evicted = self.protected.push(key.to_string(), ());
+                if let Some(i) = evicted {
                     // add back to probation
                     if i.0 != key {
                         self.probation.push(i.0.to_string(), ());
