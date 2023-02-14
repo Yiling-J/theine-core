@@ -28,7 +28,7 @@ impl Lru {
     }
 
     pub fn access(&mut self, key: &str) {
-        self.lru.demote(key);
+        self.lru.get(key);
     }
 
     pub fn size(&self) -> usize {
@@ -99,7 +99,7 @@ impl Slru {
                 }
             }
             2 => {
-                self.protected.demote(key);
+                self.protected.get(key);
                 return None;
             }
             _ => unreachable!(),

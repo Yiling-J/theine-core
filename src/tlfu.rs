@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(tlfu.lru.len(), 10);
         assert_eq!(tlfu.slru.probation_len(), 189);
         assert_eq!(tlfu.slru.protected_len(), 1);
-        // fill rlfu
+        // fill tlfu
         for i in 200..1000 {
             tlfu.set(&format!("key:{}", i));
         }
@@ -146,7 +146,7 @@ mod tests {
         tlfu.access("key:991");
         tlfu.access("key:991");
         let evicted = tlfu.set("key:1a");
-        assert_eq!(evicted.unwrap(), "key:0");
+        assert_eq!(evicted.unwrap(), "key:992");
 
         for i in 0..1000 {
             tlfu.set(&format!("key:{}:b", i));
