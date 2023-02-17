@@ -1,5 +1,6 @@
 use crate::{
     lru::Lru,
+    policy::Policy,
     timerwheel::{Cache, TimerWheel},
     tlfu::TinyLfu,
 };
@@ -65,7 +66,7 @@ impl TlfuCore {
 
     pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict) {
         let wrapper = &mut PyDictCache { dict: cache };
-        self.wheel.advance(now, wrapper)
+        self.wheel.advance(now, wrapper, &mut self.policy)
     }
 }
 
@@ -107,6 +108,6 @@ impl LruCore {
 
     pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict) {
         let wrapper = &mut PyDictCache { dict: cache };
-        self.wheel.advance(now, wrapper)
+        self.wheel.advance(now, wrapper, &mut self.policy)
     }
 }

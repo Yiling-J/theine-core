@@ -5,6 +5,8 @@ use std::hash::BuildHasherDefault;
 use std::time::Duration;
 use std::time::SystemTime;
 
+use crate::policy::Policy;
+
 pub trait Cache {
     fn del_item(&mut self, key: &str);
 }
@@ -45,7 +47,7 @@ impl TimerWheel {
         }
     }
 
-    pub fn advance(&mut self, now: u128, cache: &mut impl Cache) {
+    pub fn advance(&mut self, now: u128, cache: &mut impl Cache, policy: &mut impl Policy) {
         let previous = self.nanos;
         self.nanos = now;
 
@@ -55,11 +57,18 @@ impl TimerWheel {
             if current_ticks <= prev_ticks {
                 break;
             }
-            self.expire(i, prev_ticks, current_ticks - prev_ticks, cache);
+            self.expire(i, prev_ticks, current_ticks - prev_ticks, cache, policy);
         }
     }
 
-    fn expire(&mut self, index: usize, prev_ticks: u128, delta: u128, cache: &mut impl Cache) {
+    fn expire(
+        &mut self,
+        index: usize,
+        prev_ticks: u128,
+        delta: u128,
+        cache: &mut impl Cache,
+        policy: &mut impl Policy,
+    ) {
         let mask = (self.buckets[index] - 1) as u128;
         let steps = cmp::min(delta as usize, self.buckets[index]);
         let start = prev_ticks & mask;
@@ -69,6 +78,8 @@ impl TimerWheel {
             for data in self.wheel[index][(i & mask) as usize].iter() {
                 if *data.1 <= self.nanos {
                     cache.del_item(data.0);
+                    policy.remove(data.0);
+                    self.keys.remove(data.0);
                 } else {
                     modified.insert(data.0.to_string(), *data.1);
                 }
@@ -129,6 +140,8 @@ impl TimerWheel {
 
 #[cfg(test)]
 mod tests {
+
+    use crate::tlfu::TinyLfu;
 
     use super::{Cache, TimerWheel};
     use std::time::{Duration, SystemTime};
@@ -213,7 +226,15 @@ mod tests {
         let cache = &mut MockCache {
             deleted: Vec::new(),
         };
+        let mut policy = TinyLfu::new(1000);
 
+        policy.set("k1");
+        policy.set("k2");
+        policy.set("k3");
+        policy.set("k4");
+        policy.set("k5");
+        policy.set("k6");
+        policy.set("k7");
         tw.schedule("k1", now + Duration::from_secs(1).as_nanos());
         tw.schedule("k2", now + Duration::from_secs(10).as_nanos());
         tw.schedule("k3", now + Duration::from_secs(30).as_nanos());
@@ -222,15 +243,41 @@ mod tests {
         tw.schedule("k6", now + Duration::from_secs(142000).as_nanos());
         tw.schedule("k7", now + Duration::from_secs(1420000).as_nanos());
         assert_eq!(tw.keys.len(), 7);
-        tw.advance(now + Duration::from_secs(64).as_nanos(), cache);
+        tw.advance(now + Duration::from_secs(64).as_nanos(), cache, &mut policy);
         assert_eq!(cache.deleted.len(), 3);
-        tw.advance(now + Duration::from_secs(200).as_nanos(), cache);
+        assert_eq!(policy.size(), 4);
+        assert_eq!(tw.keys.len(), 4);
+        tw.advance(
+            now + Duration::from_secs(200).as_nanos(),
+            cache,
+            &mut policy,
+        );
         assert_eq!(cache.deleted.len(), 4);
-        tw.advance(now + Duration::from_secs(12000).as_nanos(), cache);
+        assert_eq!(policy.size(), 3);
+        assert_eq!(tw.keys.len(), 3);
+        tw.advance(
+            now + Duration::from_secs(12000).as_nanos(),
+            cache,
+            &mut policy,
+        );
         assert_eq!(cache.deleted.len(), 5);
-        tw.advance(now + Duration::from_secs(350000).as_nanos(), cache);
+        assert_eq!(policy.size(), 2);
+        assert_eq!(tw.keys.len(), 2);
+        tw.advance(
+            now + Duration::from_secs(350000).as_nanos(),
+            cache,
+            &mut policy,
+        );
         assert_eq!(cache.deleted.len(), 6);
-        tw.advance(now + Duration::from_secs(1520000).as_nanos(), cache);
+        assert_eq!(policy.size(), 1);
+        assert_eq!(tw.keys.len(), 1);
+        tw.advance(
+            now + Duration::from_secs(1520000).as_nanos(),
+            cache,
+            &mut policy,
+        );
         assert_eq!(cache.deleted.len(), 7);
+        assert_eq!(policy.size(), 0);
+        assert_eq!(tw.keys.len(), 0);
     }
 }

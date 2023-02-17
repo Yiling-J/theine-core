@@ -2,8 +2,16 @@ use std::num::NonZeroUsize;
 
 use lru::LruCache;
 
+use crate::policy::Policy;
+
 pub struct Lru {
     lru: LruCache<String, ()>, // id is 0
+}
+
+impl Policy for Lru {
+    fn remove(&mut self, key: &str) {
+        self.lru.pop(key);
+    }
 }
 
 impl Lru {
@@ -21,10 +29,6 @@ impl Lru {
             }
         }
         None
-    }
-
-    pub fn remove(&mut self, key: &str) {
-        self.lru.pop(key);
     }
 
     pub fn access(&mut self, key: &str) {

@@ -1,4 +1,5 @@
 use crate::lru::{Lru, Slru};
+use crate::policy::Policy;
 use crate::sketch::CountMinSketch;
 use ahash::{AHasher, RandomState};
 use std::collections::HashMap;
@@ -10,6 +11,21 @@ pub struct TinyLfu {
     sketch: CountMinSketch,
     key_mapping: HashMap<String, u8, BuildHasherDefault<AHasher>>,
     hasher: RandomState,
+}
+
+impl Policy for TinyLfu {
+    // remove key
+    fn remove(&mut self, key: &str) {
+        let e = self.key_mapping.remove(key);
+        if let Some(i) = e {
+            match i {
+                0 => self.lru.remove(key),
+                1 => self.slru.remove(key, 1),
+                2 => self.slru.remove(key, 2),
+                _ => unreachable!(),
+            };
+        }
+    }
 }
 
 impl TinyLfu {
@@ -55,19 +71,6 @@ impl TinyLfu {
         None
     }
 
-    // remove key
-    pub fn remove(&mut self, key: &str) {
-        let e = self.key_mapping.remove(key);
-        if let Some(i) = e {
-            match i {
-                0 => self.lru.remove(key),
-                1 => self.slru.remove(key, 1),
-                2 => self.slru.remove(key, 2),
-                _ => unreachable!(),
-            };
-        }
-    }
-
     // mark access, update sketch and lru/slru
     pub fn access(&mut self, key: &str) {
         self.sketch.add(self.hasher.hash_one(key.to_string()));
@@ -89,6 +92,10 @@ impl TinyLfu {
                 _ => unreachable!(),
             };
         };
+    }
+
+    pub fn size(&self) -> usize {
+        self.key_mapping.len()
     }
 }
 
