@@ -47,12 +47,20 @@ impl TlfuCore {
     }
 
     pub fn set_policy(&mut self, key: &str) -> Option<String> {
-        self.policy.set(key)
+        if let Some(evicted) = self.policy.set(key) {
+            self.wheel.deschedule(&evicted);
+            return Some(evicted);
+        }
+        None
     }
 
     pub fn set(&mut self, key: &str, expire: u128) -> Option<String> {
         self.wheel.schedule(key, expire);
-        self.policy.set(key)
+        if let Some(evicted) = self.policy.set(key) {
+            self.wheel.deschedule(&evicted);
+            return Some(evicted);
+        }
+        None
     }
 
     pub fn remove(&mut self, key: &str) {
