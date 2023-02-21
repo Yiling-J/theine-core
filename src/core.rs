@@ -8,11 +8,20 @@ use pyo3::{prelude::*, types::PyDict};
 
 struct PyDictCache<'a> {
     dict: &'a PyDict,
+    kh: &'a PyDict,
+    hk: &'a PyDict,
 }
 
 impl<'a> Cache for PyDictCache<'a> {
     fn del_item(&mut self, key: &str) {
         let _ = self.dict.del_item(key);
+        if let Some(nkey) = key.strip_prefix("_auto:") {
+            let num: u64 = nkey.parse().unwrap();
+            if let Some(keyh) = self.kh.get_item(num) {
+                let _ = self.kh.del_item(num);
+                let _ = self.hk.del_item(keyh);
+            }
+        }
     }
 }
 
@@ -72,8 +81,12 @@ impl TlfuCore {
         self.policy.access(key);
     }
 
-    pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict) {
-        let wrapper = &mut PyDictCache { dict: cache };
+    pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict, kh: &PyDict, hk: &PyDict) {
+        let wrapper = &mut PyDictCache {
+            dict: cache,
+            kh,
+            hk,
+        };
         self.wheel.advance(now, wrapper, &mut self.policy)
     }
 }
@@ -114,8 +127,12 @@ impl LruCore {
         self.policy.access(key);
     }
 
-    pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict) {
-        let wrapper = &mut PyDictCache { dict: cache };
+    pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict, kh: &PyDict, hk: &PyDict) {
+        let wrapper = &mut PyDictCache {
+            dict: cache,
+            kh,
+            hk,
+        };
         self.wheel.advance(now, wrapper, &mut self.policy)
     }
 }
