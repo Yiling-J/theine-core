@@ -1,137 +1,114 @@
-use std::num::NonZeroUsize;
-
-use lru::LruCache;
-
-use crate::policy::Policy;
+use crate::{
+    metadata::{Link, MetaData},
+    policy::Policy,
+};
 
 pub struct Lru {
-    lru: LruCache<String, ()>, // id is 0
+    pub link: Link, // id is 1
 }
 
 impl Policy for Lru {
-    fn remove(&mut self, key: &str) {
-        self.lru.pop(key);
+    fn remove(&mut self, index: u32, metadata: &mut MetaData) {
+        self.link.remove(index, metadata);
     }
 }
 
 impl Lru {
-    pub fn new(maxsize: usize) -> Lru {
+    pub fn new(maxsize: usize, metadata: &mut MetaData) -> Lru {
         Lru {
-            lru: LruCache::new(NonZeroUsize::new(maxsize).unwrap()),
+            link: Link::new(1, maxsize as u32, metadata),
         }
     }
 
-    pub fn set(&mut self, key: &str) -> Option<String> {
-        let evicted = self.lru.push(key.to_string(), ());
-        if let Some(i) = evicted {
-            if i.0 != key {
-                return Some(i.0);
-            }
-        }
-        None
+    pub fn insert(&mut self, index: u32, metadata: &mut MetaData) -> Option<u32> {
+        self.link.insert_front(index, metadata)
     }
 
-    pub fn access(&mut self, key: &str) {
-        self.lru.get(key);
+    pub fn access(&mut self, index: u32, metadata: &mut MetaData) {
+        self.link.touch(index, metadata)
     }
 
-    pub fn size(&self) -> usize {
-        self.lru.cap().get()
+    pub fn capacity(&self) -> usize {
+        self.link.capacity as usize
     }
 
     pub fn len(&self) -> usize {
-        self.lru.len()
+        self.link.len as usize
     }
 }
 
 pub struct Slru {
-    protected: LruCache<String, ()>, // id is 1
-    probation: LruCache<String, ()>, // id is 2
+    pub probation: Link, // id is 2
+    pub protected: Link, // id is 3
     maxsize: usize,
 }
 
 impl Slru {
-    pub fn new(maxsize: usize) -> Slru {
+    pub fn new(maxsize: usize, metadata: &mut MetaData) -> Slru {
         let protected_cap = (maxsize as f64 * 0.8) as usize;
         Slru {
             maxsize,
-            protected: LruCache::new(NonZeroUsize::new(protected_cap).unwrap()),
-            probation: LruCache::new(NonZeroUsize::new(maxsize).unwrap()),
+            probation: Link::new(2, maxsize as u32, metadata),
+            protected: Link::new(3, protected_cap as u32, metadata),
         }
     }
 
-    pub fn set(&mut self, key: &str) -> Option<String> {
-        if self.protected.len() + self.probation.len() >= self.maxsize {
-            let evicted = self.probation.pop_lru();
-            self.probation.push(key.to_string(), ());
-            if let Some(i) = evicted {
-                return Some(i.0);
+    pub fn insert(&mut self, index: u32, metadata: &mut MetaData) -> Option<u32> {
+        if self.protected.len + self.probation.len >= self.maxsize as u32 {
+            if let Some(evicted) = self.probation.pop_tail(metadata) {
+                self.probation.insert_front(index, metadata);
+                Some(evicted)
+            } else {
+                self.probation.insert_front(index, metadata)
             }
         } else {
-            let evicted = self.probation.push(key.to_string(), ());
-            if let Some(i) = evicted {
-                if i.0 != key {
-                    return Some(i.0);
-                }
-            }
+            self.probation.insert_front(index, metadata)
         }
-        None
     }
 
-    pub fn victim(&mut self) -> Option<String> {
-        if self.probation.len() + self.protected.len() < self.maxsize {
+    pub fn victim(&mut self, metadata: &mut MetaData) -> Option<u32> {
+        if self.probation.len + self.protected.len < self.maxsize as u32 {
             return None;
         }
-        let evicted = self.probation.peek_lru();
-        if let Some(i) = evicted {
-            return Some(i.0.to_string());
-        }
-        None
+        self.probation.tail(metadata)
     }
 
-    pub fn access(&mut self, key: &str, id: u8) -> Option<String> {
-        match id {
-            1 => {
-                self.probation.pop(key);
-                let evicted = self.protected.push(key.to_string(), ());
-                if let Some(i) = evicted {
-                    // add back to probation
-                    if i.0 != key {
-                        self.probation.push(i.0.to_string(), ());
-                        return Some(i.0);
-                    }
+    pub fn access(&mut self, index: u32, metadata: &mut MetaData) {
+        let entry = &mut metadata.data[index as usize];
+        match entry.link_id {
+            2 => {
+                self.probation.remove(index, metadata);
+                if let Some(evicted) = self.protected.insert_front(index, metadata) {
+                    self.probation.insert_front(evicted, metadata);
                 }
             }
-            2 => {
-                self.protected.get(key);
-                return None;
-            }
+            3 => self.protected.touch(index, metadata),
             _ => unreachable!(),
-        };
-        None
+        }
     }
 
-    pub fn remove(&mut self, key: &str, id: u8) {
-        match id {
-            1 => self.probation.pop(key),
-            2 => self.protected.pop(key),
+    pub fn remove(&mut self, index: u32, metadata: &mut MetaData) {
+        let entry = &mut metadata.data[index as usize];
+        match entry.link_id {
+            2 => self.probation.remove(index, metadata),
+            3 => self.protected.remove(index, metadata),
             _ => unreachable!(),
         };
     }
 
-    pub fn protected_size(&self) -> usize {
-        self.protected.cap().get()
+    pub fn protected_capacity(&self) -> usize {
+        self.protected.capacity as usize
     }
 
     pub fn protected_len(&self) -> usize {
-        self.protected.len()
+        self.protected.len as usize
     }
 
-    pub fn probation_size(&self) -> usize {
-        self.probation.cap().get()
+    pub fn probation_capacity(&self) -> usize {
+        self.probation.capacity as usize
     }
 
     pub fn probation_len(&self) -> usize {
-        self.probation.len()
+        self.probation.len as usize
     }
 }

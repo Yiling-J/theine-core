@@ -1,10 +1,9 @@
-use ahash::AHasher;
 use std::cmp;
-use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
 use std::time::Duration;
 use std::time::SystemTime;
 
+use crate::metadata::Link;
+use crate::metadata::MetaData;
 use crate::policy::Policy;
 
 pub trait Cache {
@@ -15,86 +14,12 @@ pub struct TimerWheel {
     buckets: Vec<usize>,
     spans: Vec<u128>,
     shift: Vec<u32>,
-    wheel: Vec<Vec<HashMap<String, u128>>>,
-    keys: HashMap<String, (u8, u8), BuildHasherDefault<AHasher>>,
+    wheel: Vec<Vec<Link>>,
     nanos: u128,
 }
 
 impl TimerWheel {
-    fn find_index(&self, expire: u128) -> (u8, u8) {
-        let duration = expire - self.nanos;
-        for i in 0..5 {
-            if duration < self.spans[i + 1] {
-                let ticks = expire >> self.shift[i];
-                let slot = ticks & (self.buckets[i] - 1) as u128;
-                return (i as u8, slot as u8);
-            }
-        }
-        (4, 0)
-    }
-
-    pub fn schedule(&mut self, key: &str, expire: u128) {
-        self.deschedule(key);
-        let index = self.find_index(expire);
-        self.wheel[index.0 as usize][index.1 as usize].insert(key.to_string(), expire);
-        self.keys.insert(key.to_string(), index);
-    }
-
-    pub fn deschedule(&mut self, key: &str) {
-        let index = self.keys.remove(key);
-        if let Some(i) = index {
-            self.wheel[i.0 as usize][i.1 as usize].remove(key);
-        }
-    }
-
-    pub fn advance(&mut self, now: u128, cache: &mut impl Cache, policy: &mut impl Policy) {
-        let previous = self.nanos;
-        self.nanos = now;
-
-        for i in 0..5 {
-            let prev_ticks = previous >> self.shift[i];
-            let current_ticks = now >> self.shift[i];
-            if current_ticks <= prev_ticks {
-                break;
-            }
-            self.expire(i, prev_ticks, current_ticks - prev_ticks, cache, policy);
-        }
-    }
-
-    fn expire(
-        &mut self,
-        index: usize,
-        prev_ticks: u128,
-        delta: u128,
-        cache: &mut impl Cache,
-        policy: &mut impl Policy,
-    ) {
-        let mask = (self.buckets[index] - 1) as u128;
-        let steps = cmp::min(delta as usize, self.buckets[index]);
-        let start = prev_ticks & mask;
-        let end = start + steps as u128;
-        for i in start..end {
-            let mut modified: HashMap<String, u128> = HashMap::new();
-            for data in self.wheel[index][(i & mask) as usize].iter() {
-                if *data.1 <= self.nanos {
-                    cache.del_item(data.0);
-                    policy.remove(data.0);
-                    self.keys.remove(data.0);
-                } else {
-                    modified.insert(data.0.to_string(), *data.1);
-                }
-            }
-            // clear current bucket and reschedule items in current bucket
-            self.wheel[index][(i & mask) as usize].clear();
-            for i in modified.iter() {
-                self.schedule(i.0, *i.1);
-            }
-        }
-    }
-}
-
-impl TimerWheel {
-    pub fn new() -> Self {
+    pub fn new(size: usize, metadata: &mut MetaData) -> Self {
         let buckets = vec![64, 64, 32, 4, 1];
         let spans = vec![
             Duration::from_secs(1).as_nanos().next_power_of_two(), // 1.07s
@@ -119,9 +44,16 @@ impl TimerWheel {
             spans[3].trailing_zeros(),
             spans[4].trailing_zeros(),
         ];
-        let mut wheel: Vec<Vec<HashMap<String, u128>>> = vec![Vec::new(); 5];
+        let mut wheel = Vec::new();
+        // counter is the index of link, start from 4 because 0,1,2,3 are reserved
+        let mut counter = 4;
         for i in 0..5 {
-            wheel[i] = vec![HashMap::new(); buckets[i]];
+            let mut tmp = Vec::new();
+            for _ in 0..buckets[i] {
+                tmp.push(Link::new(counter, size as u32, metadata));
+                counter += 1;
+            }
+            wheel.push(tmp);
         }
 
         Self {
@@ -129,11 +61,110 @@ impl TimerWheel {
             spans,
             shift,
             wheel,
-            keys: HashMap::default(),
             nanos: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos(),
+        }
+    }
+
+    fn find_index(&self, expire: u128) -> (u8, u8) {
+        let duration = expire - self.nanos;
+        for i in 0..5 {
+            if duration < self.spans[i + 1] {
+                let ticks = expire >> self.shift[i];
+                let slot = ticks & (self.buckets[i] - 1) as u128;
+                return (i as u8, slot as u8);
+            }
+        }
+        (4, 0)
+    }
+
+    pub fn schedule(&mut self, index: u32, metadata: &mut MetaData) {
+        self.deschedule(index, metadata);
+        let entry = &mut metadata.data[index as usize];
+        if entry.expire > 0 {
+            let w_index = self.find_index(entry.expire);
+            let link = &mut self.wheel[w_index.0 as usize][w_index.1 as usize];
+            entry.wheel_link_id = link.id;
+            entry.wheel_index = w_index;
+            link.insert_front_wheel(index, metadata);
+        }
+    }
+
+    pub fn deschedule(&mut self, index: u32, metadata: &mut MetaData) {
+        let entry = &mut metadata.data[index as usize];
+        let w_index = entry.wheel_index;
+        let link_id = entry.wheel_link_id;
+        if link_id > 0 {
+            self.wheel[w_index.0 as usize][w_index.1 as usize].remove_wheel(index, metadata);
+        }
+    }
+
+    pub fn advance(
+        &mut self,
+        now: u128,
+        cache: &mut impl Cache,
+        policy: &mut impl Policy,
+        metadata: &mut MetaData,
+    ) {
+        let previous = self.nanos;
+        self.nanos = now;
+
+        for i in 0..5 {
+            let prev_ticks = previous >> self.shift[i];
+            let current_ticks = now >> self.shift[i];
+            if current_ticks <= prev_ticks {
+                break;
+            }
+            self.expire(
+                i,
+                prev_ticks,
+                current_ticks - prev_ticks,
+                cache,
+                policy,
+                metadata,
+            );
+        }
+    }
+
+    fn expire(
+        &mut self,
+        index: usize,
+        prev_ticks: u128,
+        delta: u128,
+        cache: &mut impl Cache,
+        policy: &mut impl Policy,
+        metadata: &mut MetaData,
+    ) {
+        let mask = (self.buckets[index] - 1) as u128;
+        let steps = cmp::min(delta as usize, self.buckets[index]);
+        let start = prev_ticks & mask;
+        let end = start + steps as u128;
+        for i in start..end {
+            let mut modified = Vec::new();
+            let mut removed = Vec::new();
+
+            for (index, key, expire) in self.wheel[index][(i & mask) as usize].iter_wheel(metadata)
+            {
+                if expire <= self.nanos {
+                    cache.del_item(key.as_str());
+                    removed.push(index);
+                } else {
+                    modified.push(index);
+                }
+            }
+
+            for index in removed.iter() {
+                metadata.remove(*index);
+                policy.remove(*index, metadata);
+            }
+            for index in modified.iter() {
+                self.schedule(*index, metadata)
+            }
+
+            // clear current bucket and reschedule items in current bucket
+            self.wheel[index][(i & mask) as usize].clear(metadata);
         }
     }
 }
@@ -141,7 +172,7 @@ impl TimerWheel {
 #[cfg(test)]
 mod tests {
 
-    use crate::tlfu::TinyLfu;
+    use crate::{metadata::MetaData, tlfu::TinyLfu};
 
     use super::{Cache, TimerWheel};
     use std::time::{Duration, SystemTime};
@@ -158,7 +189,8 @@ mod tests {
 
     #[test]
     fn test_find_bucket() {
-        let tw = TimerWheel::new();
+        let mut metadata = MetaData::new(1000);
+        let tw = TimerWheel::new(1000, &mut metadata);
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -194,31 +226,47 @@ mod tests {
 
     #[test]
     fn test_schedule() {
-        let mut tw = TimerWheel::new();
+        let mut metadata = MetaData::new(1000);
+        let mut tw = TimerWheel::new(1000, &mut metadata);
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        tw.schedule("k1", now + Duration::from_secs(1).as_nanos());
-        tw.schedule("k2", now + Duration::from_secs(69).as_nanos());
-        tw.schedule("k3", now + Duration::from_secs(4399).as_nanos());
-        assert_eq!(tw.keys.len(), 3);
-        assert!(tw.wheel[0].iter().any(|x| x.contains_key("k1")));
-        assert!(tw.wheel[1].iter().any(|x| x.contains_key("k2")));
-        assert!(tw.wheel[2].iter().any(|x| x.contains_key("k3")));
+        for (key, expire) in [("k1", 1u64), ("k2", 69u64), ("k3", 4399u64)] {
+            let entry = metadata.get_or_create(key);
+            entry.expire = now + Duration::from_secs(expire).as_nanos();
+            tw.schedule(entry.index, &mut metadata);
+        }
+
+        assert!(tw.wheel[0]
+            .iter()
+            .any(|x| x.iter_wheel(&metadata).any(|x| x.1 == "k1")));
+        assert!(tw.wheel[1]
+            .iter()
+            .any(|x| x.iter_wheel(&metadata).any(|x| x.1 == "k2")));
+        assert!(tw.wheel[2]
+            .iter()
+            .any(|x| x.iter_wheel(&metadata).any(|x| x.1 == "k3")));
         // deschedule test
-        tw.deschedule("k1");
-        tw.deschedule("k2");
-        tw.deschedule("k3");
-        assert_eq!(tw.keys.len(), 0);
-        assert!(!tw.wheel[0].iter().any(|x| x.contains_key("k1")));
-        assert!(!tw.wheel[1].iter().any(|x| x.contains_key("k2")));
-        assert!(!tw.wheel[2].iter().any(|x| x.contains_key("k3")));
+        for key in ["k1", "k2", "k3"] {
+            let index = metadata.get_or_create(key).index;
+            tw.deschedule(index, &mut metadata);
+        }
+        assert!(!tw.wheel[0]
+            .iter()
+            .any(|x| x.iter_wheel(&metadata).any(|x| x.1 == "k1")));
+        assert!(!tw.wheel[1]
+            .iter()
+            .any(|x| x.iter_wheel(&metadata).any(|x| x.1 == "k2")));
+        assert!(!tw.wheel[2]
+            .iter()
+            .any(|x| x.iter_wheel(&metadata).any(|x| x.1 == "k3")));
     }
 
     #[test]
     fn test_advance() {
-        let mut tw = TimerWheel::new();
+        let mut metadata = MetaData::new(1000);
+        let mut tw = TimerWheel::new(1000, &mut metadata);
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -226,58 +274,62 @@ mod tests {
         let cache = &mut MockCache {
             deleted: Vec::new(),
         };
-        let mut policy = TinyLfu::new(1000);
+        let mut policy = TinyLfu::new(1000, &mut metadata);
+        for (key, expire) in [
+            ("k1", 1u64),
+            ("k2", 10u64),
+            ("k3", 30u64),
+            ("k4", 120u64),
+            ("k5", 6500u64),
+            ("k6", 142000u64),
+            ("k7", 1420000u64),
+        ] {
+            let entry = metadata.get_or_create(key);
+            let index = entry.index;
+            entry.expire = now + Duration::from_secs(expire).as_nanos();
+            policy.set(index, &mut metadata);
+            tw.schedule(index, &mut metadata);
+        }
 
-        policy.set("k1");
-        policy.set("k2");
-        policy.set("k3");
-        policy.set("k4");
-        policy.set("k5");
-        policy.set("k6");
-        policy.set("k7");
-        tw.schedule("k1", now + Duration::from_secs(1).as_nanos());
-        tw.schedule("k2", now + Duration::from_secs(10).as_nanos());
-        tw.schedule("k3", now + Duration::from_secs(30).as_nanos());
-        tw.schedule("k4", now + Duration::from_secs(120).as_nanos());
-        tw.schedule("k5", now + Duration::from_secs(6500).as_nanos());
-        tw.schedule("k6", now + Duration::from_secs(142000).as_nanos());
-        tw.schedule("k7", now + Duration::from_secs(1420000).as_nanos());
-        assert_eq!(tw.keys.len(), 7);
-        tw.advance(now + Duration::from_secs(64).as_nanos(), cache, &mut policy);
+        tw.advance(
+            now + Duration::from_secs(64).as_nanos(),
+            cache,
+            &mut policy,
+            &mut metadata,
+        );
         assert_eq!(cache.deleted.len(), 3);
-        assert_eq!(policy.size(), 4);
-        assert_eq!(tw.keys.len(), 4);
+        assert_eq!(policy.len(), 4);
         tw.advance(
             now + Duration::from_secs(200).as_nanos(),
             cache,
             &mut policy,
+            &mut metadata,
         );
         assert_eq!(cache.deleted.len(), 4);
-        assert_eq!(policy.size(), 3);
-        assert_eq!(tw.keys.len(), 3);
+        assert_eq!(policy.len(), 3);
         tw.advance(
             now + Duration::from_secs(12000).as_nanos(),
             cache,
             &mut policy,
+            &mut metadata,
         );
         assert_eq!(cache.deleted.len(), 5);
-        assert_eq!(policy.size(), 2);
-        assert_eq!(tw.keys.len(), 2);
+        assert_eq!(policy.len(), 2);
         tw.advance(
             now + Duration::from_secs(350000).as_nanos(),
             cache,
             &mut policy,
+            &mut metadata,
         );
         assert_eq!(cache.deleted.len(), 6);
-        assert_eq!(policy.size(), 1);
-        assert_eq!(tw.keys.len(), 1);
+        assert_eq!(policy.len(), 1);
         tw.advance(
             now + Duration::from_secs(1520000).as_nanos(),
             cache,
             &mut policy,
+            &mut metadata,
         );
         assert_eq!(cache.deleted.len(), 7);
-        assert_eq!(policy.size(), 0);
-        assert_eq!(tw.keys.len(), 0);
+        assert_eq!(policy.len(), 0);
     }
 }
