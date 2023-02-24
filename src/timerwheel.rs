@@ -158,12 +158,13 @@ impl TimerWheel {
                 metadata.remove(*index);
                 policy.remove(*index, metadata);
             }
-            for index in modified.iter() {
-                self.schedule(*index, metadata)
-            }
 
             // clear current bucket and reschedule items in current bucket
             self.wheel[index][(i & mask) as usize].clear(metadata);
+
+            for index in modified.iter() {
+                self.schedule(*index, metadata)
+            }
         }
     }
 }
