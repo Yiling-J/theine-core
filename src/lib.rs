@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 mod core;
 mod filter;
 mod lru;
+mod metadata;
 mod policy;
 mod sketch;
 mod timerwheel;
