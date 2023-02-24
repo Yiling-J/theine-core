@@ -85,10 +85,8 @@ impl TimerWheel {
         let entry = &mut metadata.data[index as usize];
         if entry.expire > 0 {
             let w_index = self.find_index(entry.expire);
-            let link = &mut self.wheel[w_index.0 as usize][w_index.1 as usize];
-            entry.wheel_link_id = link.id;
             entry.wheel_index = w_index;
-            link.insert_front_wheel(index, metadata);
+            self.wheel[w_index.0 as usize][w_index.1 as usize].insert_front_wheel(index, metadata);
         }
     }
 
@@ -156,6 +154,7 @@ impl TimerWheel {
             }
 
             for index in removed.iter() {
+                self.deschedule(*index, metadata);
                 metadata.remove(*index);
                 policy.remove(*index, metadata);
             }
@@ -172,9 +171,10 @@ impl TimerWheel {
 #[cfg(test)]
 mod tests {
 
-    use crate::{metadata::MetaData, tlfu::TinyLfu};
+    use crate::{core::TlfuCore, metadata::MetaData, tlfu::TinyLfu};
 
     use super::{Cache, TimerWheel};
+    use rand::prelude::*;
     use std::time::{Duration, SystemTime};
 
     struct MockCache {
@@ -235,7 +235,9 @@ mod tests {
         for (key, expire) in [("k1", 1u64), ("k2", 69u64), ("k3", 4399u64)] {
             let entry = metadata.get_or_create(key);
             entry.expire = now + Duration::from_secs(expire).as_nanos();
-            tw.schedule(entry.index, &mut metadata);
+            let index = entry.index;
+            tw.schedule(index, &mut metadata);
+            assert!(metadata.data[index as usize].wheel_link_id > 0);
         }
 
         assert!(tw.wheel[0]
@@ -251,6 +253,7 @@ mod tests {
         for key in ["k1", "k2", "k3"] {
             let index = metadata.get_or_create(key).index;
             tw.deschedule(index, &mut metadata);
+            assert!(metadata.data[index as usize].wheel_link_id == 0);
         }
         assert!(!tw.wheel[0]
             .iter()
@@ -299,6 +302,15 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 3);
         assert_eq!(policy.len(), 4);
+        for key in ["k1", "k2", "k3"] {
+            let index = metadata.get_or_create(key).index;
+            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        }
+        for key in ["k4", "k5", "k6", "k7"] {
+            let index = metadata.get_or_create(key).index;
+            assert!(metadata.data[index as usize].wheel_link_id > 0);
+        }
+
         tw.advance(
             now + Duration::from_secs(200).as_nanos(),
             cache,
@@ -307,6 +319,14 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 4);
         assert_eq!(policy.len(), 3);
+        for key in ["k1", "k2", "k3", "k4"] {
+            let index = metadata.get_or_create(key).index;
+            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        }
+        for key in ["k5", "k6", "k7"] {
+            let index = metadata.get_or_create(key).index;
+            assert!(metadata.data[index as usize].wheel_link_id > 0);
+        }
         tw.advance(
             now + Duration::from_secs(12000).as_nanos(),
             cache,
@@ -315,6 +335,14 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 5);
         assert_eq!(policy.len(), 2);
+        for key in ["k1", "k2", "k3", "k4", "k5"] {
+            let index = metadata.get_or_create(key).index;
+            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        }
+        for key in ["k6", "k7"] {
+            let index = metadata.get_or_create(key).index;
+            assert!(metadata.data[index as usize].wheel_link_id > 0);
+        }
         tw.advance(
             now + Duration::from_secs(350000).as_nanos(),
             cache,
@@ -323,6 +351,16 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 6);
         assert_eq!(policy.len(), 1);
+        for key in ["k1", "k2", "k3", "k4", "k5", "k6"] {
+            let index = metadata.get_or_create(key).index;
+            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        }
+
+        {
+            let key = "k7";
+            let index = metadata.get_or_create(key).index;
+            assert!(metadata.data[index as usize].wheel_link_id > 0);
+        }
         tw.advance(
             now + Duration::from_secs(1520000).as_nanos(),
             cache,
@@ -331,5 +369,52 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 7);
         assert_eq!(policy.len(), 0);
+        for key in ["k1", "k2", "k3", "k4", "k5", "k6", "k7"] {
+            let index = metadata.get_or_create(key).index;
+            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        }
+    }
+
+    // Simple no panic test
+    #[test]
+    fn test_advance_large() {
+        let mut core = TlfuCore::new(1000);
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cache = &mut MockCache {
+            deleted: Vec::new(),
+        };
+        let mut rng = rand::thread_rng();
+        for _ in 0..50000 {
+            let expire = now + Duration::from_secs(rng.gen_range(5..250)).as_nanos();
+            core.set(&format!("{}", rng.gen_range(0..10000)), expire);
+        }
+
+        for dt in [5, 6, 7, 10, 15, 20, 25, 50, 51, 52, 53, 70, 75, 85, 100] {
+            core.wheel.advance(
+                now + Duration::from_secs(dt).as_nanos(),
+                cache,
+                &mut core.policy,
+                &mut core.metadata,
+            );
+        }
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        for _ in 0..10000 {
+            let expire = now + Duration::from_secs(rng.gen_range(110..250)).as_nanos();
+            core.set(&format!("{}n", rng.gen_range(0..1000)), expire);
+        }
+        for dt in [5, 6, 7, 10, 15, 20, 25, 50, 51, 52, 53, 70, 75, 85, 100] {
+            core.wheel.advance(
+                now + Duration::from_secs(100 + dt).as_nanos(),
+                cache,
+                &mut core.policy,
+                &mut core.metadata,
+            );
+        }
     }
 }

@@ -28,9 +28,9 @@ impl<'a> Cache for PyDictCache<'a> {
 
 #[pyclass]
 pub struct TlfuCore {
-    policy: TinyLfu,
-    wheel: TimerWheel,
-    metadata: MetaData,
+    pub policy: TinyLfu,
+    pub wheel: TimerWheel,
+    pub metadata: MetaData,
 }
 
 #[pyclass]
@@ -43,7 +43,7 @@ pub struct LruCore {
 #[pymethods]
 impl TlfuCore {
     #[new]
-    fn new(size: usize) -> Self {
+    pub fn new(size: usize) -> Self {
         let mut metadata = MetaData::new(size);
         Self {
             policy: TinyLfu::new(size, &mut metadata),
@@ -73,6 +73,7 @@ impl TlfuCore {
         if let Some(entry) = self.metadata.get(key) {
             self.wheel.deschedule(entry, &mut self.metadata);
             self.policy.remove(entry, &mut self.metadata);
+            self.metadata.remove(entry);
         }
     }
 

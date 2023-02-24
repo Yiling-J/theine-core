@@ -1,8 +1,9 @@
 use ahash::AHashMap;
+use compact_str::CompactString;
 use std::mem::replace;
 
 pub struct Entry {
-    pub key: String,
+    pub key: CompactString,
     pub index: u32,
     pub prev: u32,
     pub next: u32,
@@ -17,7 +18,7 @@ pub struct Entry {
 impl Entry {
     pub fn new(key: &str) -> Self {
         Self {
-            key: key.to_string(),
+            key: CompactString::new(key),
             index: 0,
             prev: 0,
             next: 0,
@@ -41,6 +42,8 @@ pub struct Link {
 impl Link {
     pub fn new(id: u8, capacity: u32, metadata: &mut MetaData) -> Self {
         let root = metadata.insert_key(format!("__root:{}__", id).as_str());
+        root.link_id = id;
+        root.wheel_link_id = id;
         // 1: lru, 2: probation, 3: protected, 3+: timerwheel
         if id < 4 {
             root.prev = root.index;
@@ -120,7 +123,7 @@ impl Link {
     pub fn remove_wheel(&mut self, index: u32, metadata: &mut MetaData) {
         let entry = &mut metadata.data[index as usize];
         if entry.wheel_link_id != self.id {
-            return;
+            panic!("link id not match");
         }
         entry.wheel_link_id = 0;
         entry.wheel_index = (0, 0);
@@ -186,6 +189,7 @@ impl Link {
             metadata,
             root: self.root,
             index,
+            _id: self.id,
         }
     }
 
@@ -196,8 +200,11 @@ impl Link {
             let mut current = root.next;
             while current != self.root {
                 let node = &metadata.data[current as usize];
-                if node.key.starts_with("__root") {
-                    panic!("root found! {}-{}-{}", node.index, node.key, node.link_id);
+                if node.link_id != self.id {
+                    panic!(
+                        "link id mismatch! node link id: {}, link id: {}",
+                        node.link_id, self.id,
+                    );
                 }
                 result.push_str(node.key.as_str());
                 current = node.next;
@@ -206,8 +213,11 @@ impl Link {
             let mut current = root.prev;
             while current != self.root {
                 let node = &metadata.data[current as usize];
-                if node.key.starts_with("__root") {
-                    panic!("root found! {}-{}-{}", node.index, node.key, node.link_id);
+                if node.link_id != self.id {
+                    panic!(
+                        "link id mismatch! node link id: {}, link id: {}",
+                        node.link_id, self.id,
+                    );
                 }
                 result.push_str(node.key.as_str());
                 current = node.prev;
@@ -223,8 +233,11 @@ impl Link {
             let mut current = root.wheel_next;
             while current != self.root {
                 let node = &metadata.data[current as usize];
-                if node.key.starts_with("__root") {
-                    panic!("root found! {}-{}-{}", node.index, node.key, node.link_id);
+                if node.wheel_link_id != self.id {
+                    panic!(
+                        "link id mismatch! node link id: {}, link id: {}",
+                        node.wheel_link_id, self.id,
+                    );
                 }
                 result.push_str(node.key.as_str());
                 current = node.wheel_next;
@@ -233,8 +246,11 @@ impl Link {
             let mut current = root.wheel_prev;
             while current != self.root {
                 let node = &metadata.data[current as usize];
-                if node.key.starts_with("__root") {
-                    panic!("root found! {}-{}-{}", node.index, node.key, node.link_id);
+                if node.wheel_link_id != self.id {
+                    panic!(
+                        "link id mismatch! node link id: {}, link id: {}",
+                        node.wheel_link_id, self.id,
+                    );
                 }
                 result.push_str(node.key.as_str());
                 current = node.wheel_prev;
@@ -249,6 +265,7 @@ pub struct IterWheel<'a> {
     metadata: &'a MetaData,
     index: u32,
     root: u32,
+    _id: u8,
 }
 
 impl<'a> Iterator for IterWheel<'a> {
@@ -260,11 +277,8 @@ impl<'a> Iterator for IterWheel<'a> {
         } else {
             let current = self.index;
             let entry = &self.metadata.data[current as usize];
-            if entry.key.starts_with("__root") {
-                panic!(
-                    "root found! {}-{}-{}",
-                    entry.index, entry.key, entry.link_id
-                );
+            if entry.wheel_link_id != self._id {
+                panic!("loop");
             }
             self.index = entry.wheel_next;
             Some((current, entry.key.to_string(), entry.expire))
@@ -273,7 +287,7 @@ impl<'a> Iterator for IterWheel<'a> {
 }
 
 pub struct MetaData {
-    keys: AHashMap<String, u32>,
+    keys: AHashMap<CompactString, u32>,
     pub data: Vec<Entry>,
     empty: Vec<u32>,
 }
@@ -282,7 +296,7 @@ impl MetaData {
     pub fn new(size: usize) -> Self {
         Self {
             keys: AHashMap::new(),
-            data: Vec::with_capacity(size + 10),
+            data: Vec::with_capacity(size + 500), // key node size + meta node size
             empty: Vec::with_capacity(size),
         }
     }
@@ -297,6 +311,8 @@ impl MetaData {
 
     // get entry by key string, create new if not exist
     pub fn get_or_create(&mut self, key: &str) -> &mut Entry {
+        println!("data size-{}", self.data.len());
+        println!("key size-{}", self.keys.len());
         if let Some(index) = self.keys.get(key) {
             return &mut self.data[*index as usize];
         }
@@ -316,13 +332,13 @@ impl MetaData {
             let tmp = &mut self.data[index as usize];
             entry.index = index;
             _ = replace(tmp, entry);
-            self.keys.insert(key.to_string(), index);
+            self.keys.insert(CompactString::new(key), index);
             &mut self.data[index as usize]
         } else {
             let index = self.data.len();
             entry.index = index as u32;
             self.data.push(entry);
-            self.keys.insert(key.to_string(), index as u32);
+            self.keys.insert(CompactString::new(key), index as u32);
             &mut self.data[index]
         }
     }
@@ -338,18 +354,25 @@ mod tests {
         let mut link = Link::new(1, 5, &mut metadata);
         let entry_a = metadata.get_or_create("a");
         link.insert_front(entry_a.index, &mut metadata);
+        assert_eq!(link.display(true, &metadata), "a");
+        assert_eq!(link.display(false, &metadata), "a");
         let entry_b = metadata.get_or_create("b");
         link.insert_front(entry_b.index, &mut metadata);
+        assert_eq!(link.display(true, &metadata), "ba");
+        assert_eq!(link.display(false, &metadata), "ab");
         let entry_c = metadata.get_or_create("c");
         link.insert_front(entry_c.index, &mut metadata);
+        assert_eq!(link.display(true, &metadata), "cba");
+        assert_eq!(link.display(false, &metadata), "abc");
         let entry_d = metadata.get_or_create("d");
         link.insert_front(entry_d.index, &mut metadata);
+        assert_eq!(link.display(true, &metadata), "dcba");
+        assert_eq!(link.display(false, &metadata), "abcd");
         let entry_e = metadata.get_or_create("e");
         link.insert_front(entry_e.index, &mut metadata);
-        // latest first
         assert_eq!(link.display(true, &metadata), "edcba");
-        // least first
         assert_eq!(link.display(false, &metadata), "abcde");
+
         let entry_f = metadata.get_or_create("f");
         link.insert_front(entry_f.index, &mut metadata);
         // exceed max, remove least one(a)
@@ -404,6 +427,8 @@ mod tests {
         let mut link = Link::new(5, 100, &mut metadata);
         let entry_a = metadata.get_or_create("a");
         link.insert_front_wheel(entry_a.index, &mut metadata);
+        assert_eq!(link.display_wheel(true, &metadata), "a");
+        assert_eq!(link.display_wheel(false, &metadata), "a");
         let entry_b = metadata.get_or_create("b");
         link.insert_front_wheel(entry_b.index, &mut metadata);
         let entry_c = metadata.get_or_create("c");
@@ -431,5 +456,17 @@ mod tests {
         link.remove_wheel(index, &mut metadata);
         assert_eq!(link.display_wheel(true, &metadata), "dba");
         assert_eq!(link.display_wheel(false, &metadata), "abd");
+        let index = metadata.get("b").unwrap();
+        link.remove_wheel(index, &mut metadata);
+        assert_eq!(link.display_wheel(true, &metadata), "da");
+        assert_eq!(link.display_wheel(false, &metadata), "ad");
+        let index = metadata.get("d").unwrap();
+        link.remove_wheel(index, &mut metadata);
+        assert_eq!(link.display_wheel(true, &metadata), "a");
+        assert_eq!(link.display_wheel(false, &metadata), "a");
+        let index = metadata.get("a").unwrap();
+        link.remove_wheel(index, &mut metadata);
+        assert_eq!(link.display_wheel(true, &metadata), "");
+        assert_eq!(link.display_wheel(false, &metadata), "");
     }
 }
