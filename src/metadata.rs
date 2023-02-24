@@ -311,8 +311,6 @@ impl MetaData {
 
     // get entry by key string, create new if not exist
     pub fn get_or_create(&mut self, key: &str) -> &mut Entry {
-        println!("data size-{}", self.data.len());
-        println!("key size-{}", self.keys.len());
         if let Some(index) = self.keys.get(key) {
             return &mut self.data[*index as usize];
         }
