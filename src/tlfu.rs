@@ -64,16 +64,19 @@ impl TinyLfu {
     }
 
     /// Mark access, update sketch and lru/slru
-    pub fn access(&mut self, key: &str, metadata: &mut MetaData) {
-        self.sketch.add(self.hasher.hash_one(key.to_string()));
-        if let Some(index) = metadata.get(key) {
-            let link_id = metadata.data[index as usize].link_id;
-            match link_id {
-                1 => self.lru.access(index, metadata),
-                2 | 3 => self.slru.access(index, metadata),
-                _ => unreachable!(),
-            }
+    pub fn access(&mut self, index: u32, metadata: &mut MetaData) {
+        let key = &metadata.data[index as usize].key;
+        self.sketch.add(self.hasher.hash_one(key));
+        let link_id = metadata.data[index as usize].link_id;
+        match link_id {
+            1 => self.lru.access(index, metadata),
+            2 | 3 => self.slru.access(index, metadata),
+            _ => unreachable!(),
         }
+    }
+
+    pub fn sketch_str(&mut self, key: &str, metadata: &mut MetaData) {
+        self.sketch.add(self.hasher.hash_one(key));
     }
 
     /// Current length of policy(lru + slru)
@@ -84,13 +87,15 @@ impl TinyLfu {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use crate::metadata::MetaData;
 
     use super::TinyLfu;
     use crate::policy::Policy;
 
     fn key_to_index(key: &str, metadata: &mut MetaData) -> u32 {
-        metadata.get_or_create(key).index
+        metadata.insert_key(key).index
     }
 
     #[test]
@@ -103,11 +108,11 @@ mod tests {
         assert_eq!(tlfu.slru.probation_len(), 0);
         assert_eq!(tlfu.slru.protected_len(), 0);
 
+        let mut index_map = HashMap::new();
         for i in 0..200 {
-            let evicted = tlfu.set(
-                key_to_index(&format!("key:{}", i), &mut metadata),
-                &mut metadata,
-            );
+            let index = key_to_index(&format!("key:{}", i), &mut metadata);
+            index_map.insert(format!("key:{}", i), index);
+            let evicted = tlfu.set(index, &mut metadata);
             assert!(evicted.is_none());
         }
         assert_eq!(
@@ -124,7 +129,7 @@ mod tests {
         assert_eq!(tlfu.slru.protected_len(), 0);
 
         // access same key will move the key from probation to protected
-        tlfu.access("key:10", &mut metadata);
+        tlfu.access(index_map["key:10"], &mut metadata);
         assert_eq!(tlfu.lru.len(), 10);
         assert_eq!(tlfu.slru.probation_len(), 189);
         assert_eq!(tlfu.slru.protected_len(), 1);
@@ -137,16 +142,15 @@ mod tests {
             tlfu.lru.link.display(false, &metadata)
         );
         // access again, length should be same
-        tlfu.access("key:10", &mut metadata);
+        tlfu.access(index_map["key:10"], &mut metadata);
         assert_eq!(tlfu.lru.len(), 10);
         assert_eq!(tlfu.slru.probation_len(), 189);
         assert_eq!(tlfu.slru.protected_len(), 1);
         // fill tlfu
         for i in 200..1000 {
-            let evicted = tlfu.set(
-                key_to_index(&format!("key:{}", i), &mut metadata),
-                &mut metadata,
-            );
+            let index = key_to_index(&format!("key:{}", i), &mut metadata);
+            index_map.insert(format!("key:{}", i), index);
+            let evicted = tlfu.set(index, &mut metadata);
             assert!(evicted.is_none());
         }
         assert_eq!(tlfu.lru.len(), 10);
@@ -155,26 +159,25 @@ mod tests {
         // set again, should evicate one
         let evicted = tlfu.set(key_to_index("key:0a", &mut metadata), &mut metadata);
         // lru size is 10, and last 10 is 990-1000, so evicate 990
-        assert_eq!(evicted.unwrap(), metadata.get("key:990").unwrap());
+        assert_eq!(evicted.unwrap(), index_map["key:990"]);
         assert_eq!(tlfu.lru.len(), 10);
         assert_eq!(tlfu.slru.probation_len(), 989);
         assert_eq!(tlfu.slru.protected_len(), 1);
         // test estimate
         let victim = tlfu.slru.victim(&mut metadata);
-        assert_eq!(victim.unwrap(), metadata.get("key:0").unwrap());
-        tlfu.access("key:991", &mut metadata);
-        tlfu.access("key:991", &mut metadata);
-        tlfu.access("key:991", &mut metadata);
-        tlfu.access("key:991", &mut metadata);
+        assert_eq!(victim.unwrap(), index_map["key:0"]);
+        tlfu.access(index_map["key:991"], &mut metadata);
+        tlfu.access(index_map["key:991"], &mut metadata);
+        tlfu.access(index_map["key:991"], &mut metadata);
+        tlfu.access(index_map["key:991"], &mut metadata);
         let evicted = tlfu.set(key_to_index("key:1a", &mut metadata), &mut metadata);
-        assert_eq!(evicted.unwrap(), metadata.get("key:992").unwrap());
+        assert_eq!(evicted.unwrap(), index_map["key:992"]);
         assert_eq!(tlfu.slru.probation_len(), 989);
 
         for i in 0..1000 {
-            tlfu.set(
-                key_to_index(&format!("key:{}:b", i), &mut metadata),
-                &mut metadata,
-            );
+            let index = key_to_index(&format!("key:{}:b", i), &mut metadata);
+            index_map.insert(format!("key:{}:b", i), index);
+            tlfu.set(index, &mut metadata);
         }
         assert_eq!(tlfu.lru.len(), 10);
         assert_eq!(tlfu.slru.probation_len(), 989);
@@ -185,7 +188,7 @@ mod tests {
             "key:999:bkey:998:bkey:997:bkey:996:bkey:995:bkey:994:bkey:993:bkey:992:bkey:991:bkey:990:b",
             tlfu.lru.link.display(true, &metadata)
         );
-        tlfu.remove(metadata.get("key:996:b").unwrap(), &mut metadata);
+        tlfu.remove(index_map["key:996:b"], &mut metadata);
         assert_eq!(
             "key:999:bkey:998:bkey:997:bkey:995:bkey:994:bkey:993:bkey:992:bkey:991:bkey:990:b",
             tlfu.lru.link.display(true, &metadata)
@@ -202,7 +205,7 @@ mod tests {
             "key:899:b",
             "key:999:b",
         ] {
-            tlfu.remove(metadata.get(key).unwrap(), &mut metadata);
+            tlfu.remove(index_map[key], &mut metadata);
             tlfu.slru.probation.display(true, &metadata);
             tlfu.slru.probation.display(false, &metadata);
             tlfu.slru.protected.display(true, &metadata);

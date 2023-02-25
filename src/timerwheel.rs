@@ -233,12 +233,14 @@ mod tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let mut indexes = Vec::new();
         for (key, expire) in [("k1", 1u64), ("k2", 69u64), ("k3", 4399u64)] {
-            let entry = metadata.get_or_create(key);
+            let entry = metadata.insert_key(key);
             entry.expire = now + Duration::from_secs(expire).as_nanos();
             let index = entry.index;
             tw.schedule(index, &mut metadata);
             assert!(metadata.data[index as usize].wheel_link_id > 0);
+            indexes.push(index);
         }
 
         assert!(tw.wheel[0]
@@ -251,11 +253,11 @@ mod tests {
             .iter()
             .any(|x| x.iter_wheel(&metadata).any(|x| x.1 == "k3")));
         // deschedule test
-        for key in ["k1", "k2", "k3"] {
-            let index = metadata.get_or_create(key).index;
-            tw.deschedule(index, &mut metadata);
-            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        for index in indexes.iter() {
+            tw.deschedule(*index, &mut metadata);
+            assert!(metadata.data[*index as usize].wheel_link_id == 0);
         }
+
         assert!(!tw.wheel[0]
             .iter()
             .any(|x| x.iter_wheel(&metadata).any(|x| x.1 == "k1")));
@@ -279,6 +281,7 @@ mod tests {
             deleted: Vec::new(),
         };
         let mut policy = TinyLfu::new(1000, &mut metadata);
+        let mut indexes = Vec::new();
         for (key, expire) in [
             ("k1", 1u64),
             ("k2", 10u64),
@@ -288,11 +291,12 @@ mod tests {
             ("k6", 142000u64),
             ("k7", 1420000u64),
         ] {
-            let entry = metadata.get_or_create(key);
+            let entry = metadata.insert_key(key);
             let index = entry.index;
             entry.expire = now + Duration::from_secs(expire).as_nanos();
             policy.set(index, &mut metadata);
             tw.schedule(index, &mut metadata);
+            indexes.push(index);
         }
 
         tw.advance(
@@ -303,13 +307,11 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 3);
         assert_eq!(policy.len(), 4);
-        for key in ["k1", "k2", "k3"] {
-            let index = metadata.get_or_create(key).index;
-            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        for index in indexes[0..3].iter() {
+            assert!(metadata.data[*index as usize].wheel_link_id == 0);
         }
-        for key in ["k4", "k5", "k6", "k7"] {
-            let index = metadata.get_or_create(key).index;
-            assert!(metadata.data[index as usize].wheel_link_id > 0);
+        for index in indexes[3..7].iter() {
+            assert!(metadata.data[*index as usize].wheel_link_id > 0);
         }
 
         tw.advance(
@@ -320,14 +322,13 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 4);
         assert_eq!(policy.len(), 3);
-        for key in ["k1", "k2", "k3", "k4"] {
-            let index = metadata.get_or_create(key).index;
-            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        for index in indexes[0..4].iter() {
+            assert!(metadata.data[*index as usize].wheel_link_id == 0);
         }
-        for key in ["k5", "k6", "k7"] {
-            let index = metadata.get_or_create(key).index;
-            assert!(metadata.data[index as usize].wheel_link_id > 0);
+        for index in indexes[4..7].iter() {
+            assert!(metadata.data[*index as usize].wheel_link_id > 0);
         }
+
         tw.advance(
             now + Duration::from_secs(12000).as_nanos(),
             cache,
@@ -336,14 +337,13 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 5);
         assert_eq!(policy.len(), 2);
-        for key in ["k1", "k2", "k3", "k4", "k5"] {
-            let index = metadata.get_or_create(key).index;
-            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        for index in indexes[0..5].iter() {
+            assert!(metadata.data[*index as usize].wheel_link_id == 0);
         }
-        for key in ["k6", "k7"] {
-            let index = metadata.get_or_create(key).index;
-            assert!(metadata.data[index as usize].wheel_link_id > 0);
+        for index in indexes[5..7].iter() {
+            assert!(metadata.data[*index as usize].wheel_link_id > 0);
         }
+
         tw.advance(
             now + Duration::from_secs(350000).as_nanos(),
             cache,
@@ -352,15 +352,11 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 6);
         assert_eq!(policy.len(), 1);
-        for key in ["k1", "k2", "k3", "k4", "k5", "k6"] {
-            let index = metadata.get_or_create(key).index;
-            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        for index in indexes[0..6].iter() {
+            assert!(metadata.data[*index as usize].wheel_link_id == 0);
         }
-
-        {
-            let key = "k7";
-            let index = metadata.get_or_create(key).index;
-            assert!(metadata.data[index as usize].wheel_link_id > 0);
+        for index in indexes[6..7].iter() {
+            assert!(metadata.data[*index as usize].wheel_link_id > 0);
         }
         tw.advance(
             now + Duration::from_secs(1520000).as_nanos(),
@@ -370,9 +366,8 @@ mod tests {
         );
         assert_eq!(cache.deleted.len(), 7);
         assert_eq!(policy.len(), 0);
-        for key in ["k1", "k2", "k3", "k4", "k5", "k6", "k7"] {
-            let index = metadata.get_or_create(key).index;
-            assert!(metadata.data[index as usize].wheel_link_id == 0);
+        for index in indexes.iter() {
+            assert!(metadata.data[*index as usize].wheel_link_id == 0);
         }
     }
 
@@ -390,7 +385,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         for _ in 0..50000 {
             let expire = now + Duration::from_secs(rng.gen_range(5..250)).as_nanos();
-            core.set(&format!("{}", rng.gen_range(0..10000)), expire);
+            core.create(&format!("{}", rng.gen_range(0..10000)), expire);
         }
 
         for dt in [5, 6, 7, 10, 15, 20, 25, 50, 51, 52, 53, 70, 75, 85, 100] {
@@ -407,7 +402,7 @@ mod tests {
             .as_nanos();
         for _ in 0..10000 {
             let expire = now + Duration::from_secs(rng.gen_range(110..250)).as_nanos();
-            core.set(&format!("{}n", rng.gen_range(0..1000)), expire);
+            core.create(&format!("{}n", rng.gen_range(0..1000)), expire);
         }
         for dt in [5, 6, 7, 10, 15, 20, 25, 50, 51, 52, 53, 70, 75, 85, 100] {
             core.wheel.advance(

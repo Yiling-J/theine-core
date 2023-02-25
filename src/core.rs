@@ -52,8 +52,8 @@ impl TlfuCore {
         }
     }
 
-    pub fn set(&mut self, key: &str, expire: u128) -> Option<String> {
-        let entry = self.metadata.get_or_create(key);
+    pub fn create(&mut self, key: &str, expire: u128) -> (u32, Option<String>) {
+        let entry = self.metadata.insert_key(key);
         entry.expire = expire;
         let index = entry.index;
         let mut evicted_index = 0;
@@ -64,21 +64,33 @@ impl TlfuCore {
             evicted_index = evicted;
         }
         if evicted_index > 0 {
-            return Some(self.metadata.data[evicted_index as usize].key.to_string());
+            return (
+                index,
+                Some(self.metadata.data[evicted_index as usize].key.to_string()),
+            );
         }
-        None
+        (index, None)
     }
 
-    pub fn remove(&mut self, key: &str) {
-        if let Some(entry) = self.metadata.get(key) {
-            self.wheel.deschedule(entry, &mut self.metadata);
-            self.policy.remove(entry, &mut self.metadata);
-            self.metadata.remove(entry);
-        }
+    pub fn update(&mut self, index: u32, expire: u128) {
+        let entry = &mut self.metadata.data[index as usize];
+        entry.expire = expire;
+        self.wheel.schedule(index, &mut self.metadata);
+        self.policy.set(index, &mut self.metadata);
     }
 
-    pub fn access(&mut self, key: &str) {
-        self.policy.access(key, &mut self.metadata);
+    pub fn remove(&mut self, index: u32) {
+        self.wheel.deschedule(index, &mut self.metadata);
+        self.policy.remove(index, &mut self.metadata);
+        self.metadata.remove(index);
+    }
+
+    pub fn access_by_str(&mut self, key: &str) {
+        self.policy.sketch_str(key, &mut self.metadata);
+    }
+
+    pub fn access_by_index(&mut self, index: u32) {
+        self.policy.access(index, &mut self.metadata);
     }
 
     pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict, kh: &PyDict, hk: &PyDict) {
@@ -104,8 +116,8 @@ impl LruCore {
         }
     }
 
-    pub fn set(&mut self, key: &str, expire: u128) -> Option<String> {
-        let entry = self.metadata.get_or_create(key);
+    pub fn create(&mut self, key: &str, expire: u128) -> (u32, Option<String>) {
+        let entry = self.metadata.insert_key(key);
         entry.expire = expire;
         let index = entry.index;
         let mut evicted_index = 0;
@@ -117,22 +129,28 @@ impl LruCore {
         }
         if evicted_index > 0 {
             let entry = &self.metadata.data[evicted_index as usize];
-            return Some(entry.key.to_string());
+            return (index, Some(entry.key.to_string()));
         }
-        None
+        (index, None)
     }
 
-    pub fn remove(&mut self, key: &str) {
-        if let Some(index) = self.metadata.get(key) {
-            self.wheel.deschedule(index, &mut self.metadata);
-            self.policy.remove(index, &mut self.metadata);
-        }
+    pub fn update(&mut self, index: u32, expire: u128) {
+        let entry = &mut self.metadata.data[index as usize];
+        entry.expire = expire;
+        self.wheel.schedule(index, &mut self.metadata);
+        self.policy.access(index, &mut self.metadata);
     }
 
-    pub fn access(&mut self, key: &str) {
-        if let Some(index) = self.metadata.get(key) {
-            self.policy.access(index, &mut self.metadata);
-        }
+    pub fn remove(&mut self, index: u32) {
+        self.wheel.deschedule(index, &mut self.metadata);
+        self.policy.remove(index, &mut self.metadata);
+        self.metadata.remove(index);
+    }
+
+    pub fn access_by_str(&mut self, key: &str) {}
+
+    pub fn access_by_index(&mut self, index: u32) {
+        self.policy.access(index, &mut self.metadata);
     }
 
     pub fn advance(&mut self, _py: Python, now: u128, cache: &PyDict, kh: &PyDict, hk: &PyDict) {

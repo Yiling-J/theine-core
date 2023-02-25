@@ -1,4 +1,3 @@
-use ahash::AHashMap;
 use compact_str::CompactString;
 use std::mem::replace;
 
@@ -287,7 +286,6 @@ impl<'a> Iterator for IterWheel<'a> {
 }
 
 pub struct MetaData {
-    keys: AHashMap<CompactString, u32>,
     pub data: Vec<Entry>,
     empty: Vec<u32>,
 }
@@ -295,48 +293,28 @@ pub struct MetaData {
 impl MetaData {
     pub fn new(size: usize) -> Self {
         Self {
-            keys: AHashMap::new(),
             data: Vec::with_capacity(size + 500), // key node size + meta node size
             empty: Vec::with_capacity(size),
         }
     }
 
-    // get entry by key
-    pub fn get(&mut self, key: &str) -> Option<u32> {
-        if let Some(index) = self.keys.get(key) {
-            return Some(*index);
-        }
-        None
-    }
-
-    // get entry by key string, create new if not exist
-    pub fn get_or_create(&mut self, key: &str) -> &mut Entry {
-        if let Some(index) = self.keys.get(key) {
-            return &mut self.data[*index as usize];
-        }
-        self.insert_key(key)
-    }
-
     // remove entry
     pub fn remove(&mut self, index: u32) {
-        self.keys.remove(&self.data[index as usize].key);
         self.empty.push(index);
     }
 
     // insert new entry to container and return
-    fn insert_key(&mut self, key: &str) -> &mut Entry {
+    pub fn insert_key(&mut self, key: &str) -> &mut Entry {
         let mut entry = Entry::new(key);
         if let Some(index) = self.empty.pop() {
             let tmp = &mut self.data[index as usize];
             entry.index = index;
             _ = replace(tmp, entry);
-            self.keys.insert(CompactString::new(key), index);
             &mut self.data[index as usize]
         } else {
             let index = self.data.len();
             entry.index = index as u32;
             self.data.push(entry);
-            self.keys.insert(CompactString::new(key), index as u32);
             &mut self.data[index]
         }
     }
@@ -344,43 +322,45 @@ impl MetaData {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::{Link, MetaData};
 
     #[test]
     fn test_link() {
         let mut metadata = MetaData::new(5);
         let mut link = Link::new(1, 5, &mut metadata);
-        let entry_a = metadata.get_or_create("a");
+        let entry_a = metadata.insert_key("a");
         link.insert_front(entry_a.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "a");
         assert_eq!(link.display(false, &metadata), "a");
-        let entry_b = metadata.get_or_create("b");
+        let entry_b = metadata.insert_key("b");
         link.insert_front(entry_b.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "ba");
         assert_eq!(link.display(false, &metadata), "ab");
-        let entry_c = metadata.get_or_create("c");
+        let entry_c = metadata.insert_key("c");
         link.insert_front(entry_c.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "cba");
         assert_eq!(link.display(false, &metadata), "abc");
-        let entry_d = metadata.get_or_create("d");
+        let entry_d = metadata.insert_key("d");
         link.insert_front(entry_d.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "dcba");
         assert_eq!(link.display(false, &metadata), "abcd");
-        let entry_e = metadata.get_or_create("e");
+        let entry_e = metadata.insert_key("e");
         link.insert_front(entry_e.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "edcba");
         assert_eq!(link.display(false, &metadata), "abcde");
 
-        let entry_f = metadata.get_or_create("f");
+        let entry_f = metadata.insert_key("f");
         link.insert_front(entry_f.index, &mut metadata);
         // exceed max, remove least one(a)
         assert_eq!(link.display(true, &metadata), "fedcb");
         assert_eq!(link.display(false, &metadata), "bcdef");
+        let mut key_map = HashMap::new();
         for i in 0..5 {
-            link.insert_front(
-                metadata.get_or_create(format!("{}", i).as_str()).index,
-                &mut metadata,
-            );
+            let index = metadata.insert_key(format!("{}", i).as_str()).index;
+            key_map.insert(format!("{}", i), index);
+            link.insert_front(index, &mut metadata);
         }
         assert_eq!(link.display(true, &metadata), "43210");
         assert_eq!(link.display(false, &metadata), "01234");
@@ -396,20 +376,20 @@ mod tests {
         assert_eq!(link.display(true, &metadata), "4321");
         assert_eq!(link.display(false, &metadata), "1234");
         // touch test
-        link.touch(metadata.get("2").unwrap(), &mut metadata);
+        link.touch(key_map["2"], &mut metadata);
         assert_eq!(link.display(true, &metadata), "2431");
         assert_eq!(link.display(false, &metadata), "1342");
         // insert at
-        let entry_x = metadata.get_or_create("x");
-        link.insert(entry_x.index, metadata.get("3").unwrap(), &mut metadata);
+        let entry_x = metadata.insert_key("x");
+        link.insert(entry_x.index, key_map["3"], &mut metadata);
         assert_eq!(link.display(true, &metadata), "243x1");
         assert_eq!(link.display(false, &metadata), "1x342");
         // remove test
-        let index = metadata.get("1").unwrap();
+        let index = key_map["1"];
         link.remove(index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "243x");
         assert_eq!(link.display(false, &metadata), "x342");
-        let index = metadata.get("2").unwrap();
+        let index = key_map["2"];
         link.remove(index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "43x");
         assert_eq!(link.display(false, &metadata), "x34");
@@ -423,18 +403,18 @@ mod tests {
     fn test_link_wheel() {
         let mut metadata = MetaData::new(5);
         let mut link = Link::new(5, 100, &mut metadata);
-        let entry_a = metadata.get_or_create("a");
-        link.insert_front_wheel(entry_a.index, &mut metadata);
+        let index_a = metadata.insert_key("a").index;
+        link.insert_front_wheel(index_a, &mut metadata);
         assert_eq!(link.display_wheel(true, &metadata), "a");
         assert_eq!(link.display_wheel(false, &metadata), "a");
-        let entry_b = metadata.get_or_create("b");
-        link.insert_front_wheel(entry_b.index, &mut metadata);
-        let entry_c = metadata.get_or_create("c");
-        link.insert_front_wheel(entry_c.index, &mut metadata);
-        let entry_d = metadata.get_or_create("d");
-        link.insert_front_wheel(entry_d.index, &mut metadata);
-        let entry_e = metadata.get_or_create("e");
-        link.insert_front_wheel(entry_e.index, &mut metadata);
+        let index_b = metadata.insert_key("b").index;
+        link.insert_front_wheel(index_b, &mut metadata);
+        let index_c = metadata.insert_key("c").index;
+        link.insert_front_wheel(index_c, &mut metadata);
+        let index_d = metadata.insert_key("d").index;
+        link.insert_front_wheel(index_d, &mut metadata);
+        let index_e = metadata.insert_key("e").index;
+        link.insert_front_wheel(index_e, &mut metadata);
         // latest first
         assert_eq!(link.display_wheel(true, &metadata), "edcba");
         // least first
@@ -444,26 +424,22 @@ mod tests {
         for (_index, key, _expire) in link.iter_wheel(&metadata) {
             data.push_str(key.as_str());
         }
+
         assert_eq!(data, "edcba");
         // test remove
-        let index = metadata.get("c").unwrap();
-        link.remove_wheel(index, &mut metadata);
+        link.remove_wheel(index_c, &mut metadata);
         assert_eq!(link.display_wheel(true, &metadata), "edba");
         assert_eq!(link.display_wheel(false, &metadata), "abde");
-        let index = metadata.get("e").unwrap();
-        link.remove_wheel(index, &mut metadata);
+        link.remove_wheel(index_e, &mut metadata);
         assert_eq!(link.display_wheel(true, &metadata), "dba");
         assert_eq!(link.display_wheel(false, &metadata), "abd");
-        let index = metadata.get("b").unwrap();
-        link.remove_wheel(index, &mut metadata);
+        link.remove_wheel(index_b, &mut metadata);
         assert_eq!(link.display_wheel(true, &metadata), "da");
         assert_eq!(link.display_wheel(false, &metadata), "ad");
-        let index = metadata.get("d").unwrap();
-        link.remove_wheel(index, &mut metadata);
+        link.remove_wheel(index_d, &mut metadata);
         assert_eq!(link.display_wheel(true, &metadata), "a");
         assert_eq!(link.display_wheel(false, &metadata), "a");
-        let index = metadata.get("a").unwrap();
-        link.remove_wheel(index, &mut metadata);
+        link.remove_wheel(index_a, &mut metadata);
         assert_eq!(link.display_wheel(true, &metadata), "");
         assert_eq!(link.display_wheel(false, &metadata), "");
     }
