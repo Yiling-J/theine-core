@@ -340,6 +340,16 @@ impl MetaData {
             &mut self.data[index]
         }
     }
+
+    pub fn clear(&mut self) {
+        self.empty.clear();
+        self.keys.clear();
+        for d in self.data.iter() {
+            if !d.key.starts_with("__root:") {
+                self.empty.push(d.index);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

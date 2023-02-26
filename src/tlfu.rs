@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use crate::lru::{Lru, Slru};
 use crate::metadata::MetaData;
 use crate::policy::Policy;
@@ -64,16 +66,28 @@ impl TinyLfu {
     }
 
     /// Mark access, update sketch and lru/slru
-    pub fn access(&mut self, key: &str, metadata: &mut MetaData) {
+    pub fn access(&mut self, key: &str, metadata: &mut MetaData) -> Option<u32> {
         self.sketch.add(self.hasher.hash_one(key.to_string()));
         if let Some(index) = metadata.get(key) {
+            let entry = &metadata.data[index as usize];
+            if entry.expire != 0
+                && entry.expire
+                    <= SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos()
+            {
+                return None;
+            }
             let link_id = metadata.data[index as usize].link_id;
             match link_id {
                 1 => self.lru.access(index, metadata),
                 2 | 3 => self.slru.access(index, metadata),
                 _ => unreachable!(),
             }
+            return Some(index);
         }
+        None
     }
 
     /// Current length of policy(lru + slru)

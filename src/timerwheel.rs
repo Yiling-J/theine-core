@@ -7,7 +7,7 @@ use crate::metadata::MetaData;
 use crate::policy::Policy;
 
 pub trait Cache {
-    fn del_item(&mut self, key: &str);
+    fn del_item(&mut self, key: &str, index: u32);
 }
 
 pub struct TimerWheel {
@@ -146,7 +146,7 @@ impl TimerWheel {
             for (index, key, expire) in self.wheel[index][(i & mask) as usize].iter_wheel(metadata)
             {
                 if expire <= self.nanos {
-                    cache.del_item(key.as_str());
+                    cache.del_item(key.as_str(), index);
                     removed.push(index);
                 } else {
                     modified.push(index);
@@ -167,6 +167,14 @@ impl TimerWheel {
             }
         }
     }
+
+    pub fn clear(&mut self, metadata: &mut MetaData) {
+        for i in self.wheel.iter_mut() {
+            for j in i.iter_mut() {
+                j.clear(metadata)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -183,7 +191,7 @@ mod tests {
     }
 
     impl Cache for MockCache {
-        fn del_item(&mut self, key: &str) {
+        fn del_item(&mut self, key: &str, _index: u32) {
             self.deleted.push(key.to_string())
         }
     }
