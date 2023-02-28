@@ -113,6 +113,10 @@ impl TlfuCore {
         self.wheel.clear(&mut self.metadata);
         self.metadata.clear();
     }
+
+    pub fn len(&self) -> usize {
+        self.metadata.len()
+    }
 }
 
 #[pymethods]
@@ -194,5 +198,9 @@ impl LruCore {
     pub fn clear(&mut self) {
         self.wheel.clear(&mut self.metadata);
         self.metadata.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.metadata.len()
     }
 }

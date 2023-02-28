@@ -41,6 +41,7 @@ pub struct Link {
 
 impl Link {
     pub fn new(id: u8, capacity: u32, metadata: &mut MetaData) -> Self {
+        metadata.meta_key_count += 1;
         let root = metadata.insert_key(format!("__root:{}__", id).as_str());
         root.link_id = id;
         root.wheel_link_id = id;
@@ -290,6 +291,7 @@ pub struct MetaData {
     keys: AHashMap<CompactString, u32>,
     pub data: Vec<Entry>,
     empty: Vec<u32>,
+    meta_key_count: usize,
 }
 
 impl MetaData {
@@ -298,6 +300,7 @@ impl MetaData {
             keys: AHashMap::new(),
             data: Vec::with_capacity(size + 500), // key node size + meta node size
             empty: Vec::with_capacity(size),
+            meta_key_count: 0,
         }
     }
 
@@ -350,6 +353,10 @@ impl MetaData {
             }
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.keys.len() - self.meta_key_count
+    }
 }
 
 #[cfg(test)]
@@ -364,22 +371,27 @@ mod tests {
         link.insert_front(entry_a.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "a");
         assert_eq!(link.display(false, &metadata), "a");
+        assert_eq!(metadata.len(), 1);
         let entry_b = metadata.get_or_create("b");
         link.insert_front(entry_b.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "ba");
         assert_eq!(link.display(false, &metadata), "ab");
+        assert_eq!(metadata.len(), 2);
         let entry_c = metadata.get_or_create("c");
         link.insert_front(entry_c.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "cba");
         assert_eq!(link.display(false, &metadata), "abc");
+        assert_eq!(metadata.len(), 3);
         let entry_d = metadata.get_or_create("d");
         link.insert_front(entry_d.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "dcba");
         assert_eq!(link.display(false, &metadata), "abcd");
+        assert_eq!(metadata.len(), 4);
         let entry_e = metadata.get_or_create("e");
         link.insert_front(entry_e.index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "edcba");
         assert_eq!(link.display(false, &metadata), "abcde");
+        assert_eq!(metadata.len(), 5);
 
         let entry_f = metadata.get_or_create("f");
         link.insert_front(entry_f.index, &mut metadata);
@@ -476,5 +488,22 @@ mod tests {
         link.remove_wheel(index, &mut metadata);
         assert_eq!(link.display_wheel(true, &metadata), "");
         assert_eq!(link.display_wheel(false, &metadata), "");
+    }
+
+    #[test]
+    fn test_len() {
+        let mut metadata = MetaData::new(5);
+        let mut link = Link::new(1, 5, &mut metadata);
+        assert_eq!(metadata.len(), 0);
+        let index_a = metadata.get_or_create("a").index;
+        link.insert_front(index_a, &mut metadata);
+        assert_eq!(metadata.len(), 1);
+        let index_b = metadata.get_or_create("b").index;
+        link.insert_front(index_a, &mut metadata);
+        assert_eq!(metadata.len(), 2);
+        metadata.remove(index_a);
+        assert_eq!(metadata.len(), 1);
+        metadata.remove(index_b);
+        assert_eq!(metadata.len(), 0);
     }
 }
