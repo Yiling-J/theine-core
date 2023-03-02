@@ -135,16 +135,20 @@ impl LruCore {
         let entry = self.metadata.get_or_create(key);
         entry.expire = expire;
         let index = entry.index;
+        let link_id = entry.link_id;
         let mut evicted_index = 0;
         self.wheel.schedule(index, &mut self.metadata);
-        if let Some(evicted) = self.policy.insert(index, &mut self.metadata) {
-            self.wheel.deschedule(evicted, &mut self.metadata);
-            self.metadata.remove(evicted);
-            evicted_index = evicted;
-        }
-        if evicted_index > 0 {
-            let evicted = &self.metadata.data[evicted_index as usize];
-            return (index, Some(evicted.index), Some(evicted.key.to_string()));
+        // new entry, insert to policy
+        if link_id == 0 {
+            if let Some(evicted) = self.policy.insert(index, &mut self.metadata) {
+                self.wheel.deschedule(evicted, &mut self.metadata);
+                self.metadata.remove(evicted);
+                evicted_index = evicted;
+            }
+            if evicted_index > 0 {
+                let evicted = &self.metadata.data[evicted_index as usize];
+                return (index, Some(evicted.index), Some(evicted.key.to_string()));
+            }
         }
         (index, None, None)
     }
@@ -153,6 +157,7 @@ impl LruCore {
         if let Some(index) = self.metadata.get(key) {
             self.wheel.deschedule(index, &mut self.metadata);
             self.policy.remove(index, &mut self.metadata);
+            self.metadata.remove(index);
             return Some(index);
         }
         None
@@ -202,5 +207,21 @@ impl LruCore {
 
     pub fn len(&self) -> usize {
         self.metadata.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LruCore;
+
+    #[test]
+    fn test_lru_core() {
+        let mut lru = LruCore::new(5);
+        for s in ["a", "b", "c", "d", "e", "f", "g", "g", "g"] {
+            lru.set(s, 0);
+        }
+        assert_eq!("gfedc", lru.policy.link.display(true, &lru.metadata));
+        assert_eq!("cdefg", lru.policy.link.display(false, &lru.metadata));
+        assert_eq!(5, lru.metadata.len());
     }
 }
