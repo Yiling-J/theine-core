@@ -1,6 +1,7 @@
 use std::time::SystemTime;
 
 use crate::{
+    clockpro::ClockPro,
     lru::Lru,
     metadata::MetaData,
     policy::Policy,
@@ -44,6 +45,85 @@ pub struct LruCore {
     policy: Lru,
     wheel: TimerWheel,
     metadata: MetaData,
+}
+
+#[pyclass]
+pub struct ClockProCore {
+    policy: ClockPro,
+    wheel: TimerWheel,
+    metadata: MetaData,
+}
+
+#[pymethods]
+impl ClockProCore {
+    #[new]
+    pub fn new(size: usize) -> Self {
+        let mut metadata = MetaData::new(size);
+        Self {
+            policy: ClockPro::new(size, &mut metadata),
+            wheel: TimerWheel::new(size, &mut metadata),
+            metadata,
+        }
+    }
+
+    pub fn set(&mut self, key: &str, expire: u128) -> (u32, Option<u32>, Option<String>) {
+        let entry = self.metadata.get_or_create(key);
+        entry.expire = expire;
+        let index = entry.index;
+        let mut evicted_index = 0;
+        self.wheel.schedule(index, &mut self.metadata);
+        // test page, remove from Python value list
+        if let Some(evicted) = self.policy.set(index, &mut self.metadata) {
+            evicted_index = evicted;
+        }
+        if evicted_index > 0 {
+            let evicted = &self.metadata.data[evicted_index as usize];
+            return (index, Some(evicted.index), Some(evicted.key.to_string()));
+        }
+        (index, None, None)
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<u32> {
+        if let Some(entry) = self.metadata.get(key) {
+            self.wheel.deschedule(entry, &mut self.metadata);
+            self.policy.remove(entry, &mut self.metadata);
+            self.metadata.remove(entry);
+            return Some(entry);
+        }
+        None
+    }
+
+    pub fn access(&mut self, key: &str) -> Option<u32> {
+        self.policy.access(key, &mut self.metadata)
+    }
+
+    pub fn advance(
+        &mut self,
+        _py: Python,
+        now: u128,
+        cache: &PyList,
+        sentinel: &PyAny,
+        kh: &PyDict,
+        hk: &PyDict,
+    ) {
+        let wrapper = &mut PyCache {
+            list: cache,
+            kh,
+            hk,
+            sentinel,
+        };
+        self.wheel
+            .advance(now, wrapper, &mut self.policy, &mut self.metadata);
+    }
+
+    pub fn clear(&mut self) {
+        self.wheel.clear(&mut self.metadata);
+        self.metadata.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.policy.len()
+    }
 }
 
 #[pymethods]
