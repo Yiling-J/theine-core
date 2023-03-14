@@ -66,21 +66,29 @@ impl ClockProCore {
         }
     }
 
-    pub fn set(&mut self, key: &str, expire: u128) -> (u32, Option<u32>, Option<String>) {
+    pub fn set(
+        &mut self,
+        key: &str,
+        expire: u128,
+    ) -> (u32, Option<u32>, Option<u32>, Option<String>) {
         let entry = self.metadata.get_or_create(key);
         entry.expire = expire;
         let index = entry.index;
-        let mut evicted_index = 0;
+        let mut removed_index = None;
+        let mut removed_key = None;
         self.wheel.schedule(index, &mut self.metadata);
-        // test page, remove from Python value list
-        if let Some(evicted) = self.policy.set(index, &mut self.metadata) {
-            evicted_index = evicted;
+        // test page, remove from Python value list only, removed page, remove all
+        let (test, removed) = self.policy.set(index, &mut self.metadata);
+        let test_index = test;
+        if let Some(i) = removed {
+            let entry = &self.metadata.data[i as usize];
+            removed_key = Some(entry.key.to_string());
+            removed_index = Some(i);
+            self.wheel.deschedule(i, &mut self.metadata);
+            self.policy.remove(i, &mut self.metadata);
+            self.metadata.remove(i);
         }
-        if evicted_index > 0 {
-            let evicted = &self.metadata.data[evicted_index as usize];
-            return (index, Some(evicted.index), Some(evicted.key.to_string()));
-        }
-        (index, None, None)
+        (index, test_index, removed_index, removed_key)
     }
 
     pub fn remove(&mut self, key: &str) -> Option<u32> {

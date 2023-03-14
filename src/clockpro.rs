@@ -62,9 +62,10 @@ impl ClockPro {
         None
     }
 
-    pub fn set(&mut self, index: u32, metadata: &mut MetaData) -> Option<u32> {
+    pub fn set(&mut self, index: u32, metadata: &mut MetaData) -> (Option<u32>, Option<u32>) {
         let entry = &mut metadata.data[index as usize];
-        let mut evicted = None;
+        let mut test = None;
+        let mut removed = None;
         if entry.link_id == 0 {
             self._meta_add(index, metadata);
             self.count_cold += 1;
@@ -77,7 +78,7 @@ impl ClockPro {
                     entry.clock_info = (false, HOT_PAGE);
                     self._meta_del(index, metadata);
                     self.count_test -= 1;
-                    evicted = self._meta_add(index, metadata);
+                    (test, removed) = self._meta_add(index, metadata);
                     self.count_hot += 1;
                 }
                 COLD_PAGE | HOT_PAGE => {
@@ -86,12 +87,13 @@ impl ClockPro {
                 _ => unreachable!(),
             }
         }
-        evicted
+        (test, removed)
     }
 
-    fn _hand_cold(&mut self, metadata: &mut MetaData) -> Option<u32> {
+    fn _hand_cold(&mut self, metadata: &mut MetaData) -> (Option<u32>, Option<u32>) {
         let entry = &mut metadata.data[self.hand_cold as usize];
-        let mut evicted = None;
+        let mut test = None;
+        let mut removed = None;
         if entry.clock_info.1 == COLD_PAGE {
             match entry.clock_info.0 {
                 true => {
@@ -102,12 +104,12 @@ impl ClockPro {
                 false => {
                     // evict test page from data array(theine Python side)
                     // but still keeping this entry in metadata
-                    evicted = Some(entry.index);
+                    test = Some(entry.index);
                     entry.clock_info = (false, TEST_PAGE);
                     self.count_cold -= 1;
                     self.count_test += 1;
                     while self.mem_max < self.count_test {
-                        self._hand_test(metadata);
+                        removed = self._hand_test(metadata);
                     }
                 }
             }
@@ -123,7 +125,7 @@ impl ClockPro {
         while self.mem_max - self.mem_cold < self.count_hot {
             self._hand_hot(metadata);
         }
-        evicted
+        (test, removed)
     }
 
     fn _hand_hot(&mut self, metadata: &mut MetaData) {
@@ -151,15 +153,17 @@ impl ClockPro {
         self.hand_hot = next;
     }
 
-    fn _hand_test(&mut self, metadata: &mut MetaData) {
+    fn _hand_test(&mut self, metadata: &mut MetaData) -> Option<u32> {
         if self.hand_test == self.hand_cold {
             self._hand_cold(metadata);
         }
+        let mut removed = None;
         let entry = &mut metadata.data[self.hand_test as usize];
         let info = entry.clock_info;
         if info.1 == TEST_PAGE {
             // remove from metadata
             // data on Python side already removed because this is a test page
+            removed = Some(self.hand_test);
             metadata.remove(self.hand_test);
             self._meta_del(self.hand_test, metadata);
             self.count_test -= 1;
@@ -173,10 +177,11 @@ impl ClockPro {
             next = metadata.data[next as usize].next;
         }
         self.hand_test = next;
+        removed
     }
 
-    fn _meta_add(&mut self, index: u32, metadata: &mut MetaData) -> Option<u32> {
-        let evicted = self._evict(metadata);
+    fn _meta_add(&mut self, index: u32, metadata: &mut MetaData) -> (Option<u32>, Option<u32>) {
+        let data = self._evict(metadata);
         self.link.insert_before(index, self.hand_hot, metadata);
         // first element
         if self.hand_hot == self.link.root {
@@ -192,7 +197,7 @@ impl ClockPro {
             self.hand_cold = prev;
         }
 
-        evicted
+        data
     }
 
     fn _meta_del(&mut self, index: u32, metadata: &mut MetaData) {
@@ -220,12 +225,13 @@ impl ClockPro {
         self.link.remove(index, metadata);
     }
 
-    fn _evict(&mut self, metadata: &mut MetaData) -> Option<u32> {
-        let mut evicted = None;
+    fn _evict(&mut self, metadata: &mut MetaData) -> (Option<u32>, Option<u32>) {
+        let mut test = None;
+        let mut removed = None;
         while self.mem_max <= self.count_hot + self.count_cold {
-            evicted = self._hand_cold(metadata);
+            (test, removed) = self._hand_cold(metadata);
         }
-        evicted
+        (test, removed)
     }
 
     pub fn len(&self) -> usize {
@@ -257,7 +263,10 @@ mod tests {
             let mut hit = false;
             if index.is_none() {
                 // create entry and add to policy
-                policy.set(metadata.get_or_create(key).index, &mut metadata);
+                let (_, removed) = policy.set(metadata.get_or_create(key).index, &mut metadata);
+                if let Some(r) = removed {
+                    metadata.remove(r);
+                }
             } else {
                 hit = true;
             }
