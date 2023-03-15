@@ -2,9 +2,9 @@ use ahash::AHashMap;
 use compact_str::CompactString;
 use std::mem::replace;
 
-pub const COLD_PAGE: u8 = 0;
-pub const HOT_PAGE: u8 = 1;
-pub const TEST_PAGE: u8 = 2;
+pub const COLD_PAGE: u8 = 1;
+pub const HOT_PAGE: u8 = 2;
+pub const TEST_PAGE: u8 = 3;
 
 pub struct Entry {
     pub key: CompactString,
@@ -49,6 +49,7 @@ impl Link {
     pub fn new(id: u8, capacity: u32, metadata: &mut MetaData) -> Self {
         metadata.meta_key_count += 1;
         let root = metadata.insert_key(format!("__root:{}__", id).as_str());
+        root.clock_info = (false, 0);
         root.link_id = id;
         root.wheel_link_id = id;
         // 1: lru, 2: probation, 3: protected, 3+: timerwheel
