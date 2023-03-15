@@ -310,7 +310,7 @@ impl<'a> Iterator for IterWheel<'a> {
             let current = self.index;
             let entry = &self.metadata.data[current as usize];
             if entry.wheel_link_id != self._id {
-                panic!("loop");
+                panic!("wheel link not match");
             }
             self.index = entry.wheel_next;
             Some((current, entry.key.to_string(), entry.expire))

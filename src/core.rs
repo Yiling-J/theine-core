@@ -58,10 +58,10 @@ pub struct ClockProCore {
 impl ClockProCore {
     #[new]
     pub fn new(size: usize) -> Self {
-        let mut metadata = MetaData::new(size);
+        let mut metadata = MetaData::new(size * 2);
         Self {
             policy: ClockPro::new(size, &mut metadata),
-            wheel: TimerWheel::new(size, &mut metadata),
+            wheel: TimerWheel::new(size * 2, &mut metadata),
             metadata,
         }
     }
@@ -85,7 +85,6 @@ impl ClockProCore {
             removed_key = Some(entry.key.to_string());
             removed_index = Some(i);
             self.wheel.deschedule(i, &mut self.metadata);
-            self.policy.remove(i, &mut self.metadata);
             self.metadata.remove(i);
         }
         (index, test_index, removed_index, removed_key)
