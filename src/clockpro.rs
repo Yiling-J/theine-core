@@ -38,7 +38,7 @@ impl ClockPro {
         Self {
             mem_max: size,
             mem_cold: size / 2,
-            mem_cold_min: size / 4,
+            mem_cold_min: 1,
             mem_cold_max: 3 * size / 4,
             hand_hot: link.root,
             hand_cold: link.root,
@@ -101,7 +101,10 @@ impl ClockPro {
     }
 
     fn _reorganize_cold(&mut self, metadata: &mut MetaData) {
+        // move back to list head, because new cold will insert at head
+        // we can find next cold in 1 step
         if self.count_cold == 0 {
+            self.hand_cold = metadata.data[self.hand_hot as usize].prev;
             return;
         }
         loop {
@@ -119,8 +122,10 @@ impl ClockPro {
 
     fn _reorganize_hot(&mut self, metadata: &mut MetaData) {
         if self.count_hot == 0 {
+            self.hand_hot = metadata.data[self.hand_hot as usize].prev;
             return;
         }
+
         loop {
             let entry = &mut metadata.data[self.hand_hot as usize];
             if entry.clock_info.1 == HOT_PAGE {
@@ -136,6 +141,7 @@ impl ClockPro {
 
     fn _reorganize_test(&mut self, metadata: &mut MetaData) {
         if self.count_test == 0 {
+            self.hand_test = self.hand_hot;
             return;
         }
         loop {
