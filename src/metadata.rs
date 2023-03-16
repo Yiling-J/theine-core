@@ -2,6 +2,10 @@ use ahash::AHashMap;
 use compact_str::CompactString;
 use std::mem::replace;
 
+pub const COLD_PAGE: u8 = 1;
+pub const HOT_PAGE: u8 = 2;
+pub const TEST_PAGE: u8 = 3;
+
 pub struct Entry {
     pub key: CompactString,
     pub index: u32,
@@ -13,6 +17,7 @@ pub struct Entry {
     pub wheel_prev: u32,
     pub wheel_next: u32,
     pub expire: u128,
+    pub clock_info: (bool, u8),
 }
 
 impl Entry {
@@ -28,6 +33,7 @@ impl Entry {
             wheel_link_id: 0,
             wheel_index: (0, 0),
             expire: 0,
+            clock_info: (false, COLD_PAGE), // new entry should be cold page and no reference
         }
     }
 }
@@ -43,6 +49,7 @@ impl Link {
     pub fn new(id: u8, capacity: u32, metadata: &mut MetaData) -> Self {
         metadata.meta_key_count += 1;
         let root = metadata.insert_key(format!("__root:{}__", id).as_str());
+        root.clock_info = (false, 0);
         root.link_id = id;
         root.wheel_link_id = id;
         // 1: lru, 2: probation, 3: protected, 3+: timerwheel
@@ -79,6 +86,31 @@ impl Link {
         entry.next = old_next;
         let next_entry = &mut metadata.data[old_next as usize];
         next_entry.prev = index;
+        self.len += 1;
+        if removed > 0 {
+            return Some(removed);
+        }
+        None
+    }
+
+    /// Insert entry before at, increments len, and returns evicted entry
+    pub fn insert_before(&mut self, index: u32, at: u32, metadata: &mut MetaData) -> Option<u32> {
+        // remove from tail if full
+        let mut removed = 0;
+        if self.len == self.capacity {
+            let tail = metadata.data[self.root as usize].prev;
+            self.remove(tail, metadata);
+            removed = tail;
+        }
+        let at_entry = &mut metadata.data[at as usize];
+        let old_prev = at_entry.prev;
+        at_entry.prev = index;
+        let entry = &mut metadata.data[index as usize];
+        entry.link_id = self.id;
+        entry.next = at;
+        entry.prev = old_prev;
+        let prev_entry = &mut metadata.data[old_prev as usize];
+        prev_entry.next = index;
         self.len += 1;
         if removed > 0 {
             return Some(removed);
@@ -279,7 +311,7 @@ impl<'a> Iterator for IterWheel<'a> {
             let current = self.index;
             let entry = &self.metadata.data[current as usize];
             if entry.wheel_link_id != self._id {
-                panic!("loop");
+                panic!("wheel link not match");
             }
             self.index = entry.wheel_next;
             Some((current, entry.key.to_string(), entry.expire))
@@ -435,6 +467,11 @@ mod tests {
         link.remove(index, &mut metadata);
         assert_eq!(link.display(true, &metadata), "43x");
         assert_eq!(link.display(false, &metadata), "x34");
+        // insert before
+        let entry_q = metadata.get_or_create("q");
+        link.insert_before(entry_q.index, metadata.get("x").unwrap(), &mut metadata);
+        assert_eq!(link.display(true, &metadata), "43qx");
+        assert_eq!(link.display(false, &metadata), "xq34");
         // clear test
         link.clear(&mut metadata);
         assert_eq!(link.display(true, &metadata), "");
