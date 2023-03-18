@@ -1,6 +1,6 @@
 use std::cmp;
 use std::time::Duration;
-use std::time::SystemTime;
+use std::time::Instant;
 
 use crate::metadata::Link;
 use crate::metadata::MetaData;
@@ -10,17 +10,40 @@ pub trait Cache {
     fn del_item(&mut self, key: &str, index: u32);
 }
 
+pub struct Clock {
+    start: Instant,
+}
+
+impl Clock {
+    pub fn new() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+
+    pub fn now_ns(&self) -> u128 {
+        (Instant::now() - self.start).as_nanos()
+    }
+
+    pub fn expire_ns(&self, ttl: u128) -> u128 {
+        self.now_ns() + ttl
+    }
+}
+
 pub struct TimerWheel {
     buckets: Vec<usize>,
     spans: Vec<u128>,
     shift: Vec<u32>,
     wheel: Vec<Vec<Link>>,
+    pub clock: Clock,
     nanos: u128,
 }
 
 impl TimerWheel {
     pub fn new(size: usize, metadata: &mut MetaData) -> Self {
         let buckets = vec![64, 64, 32, 4, 1];
+        let clock = Clock::new();
+        let nanos = clock.now_ns();
         let spans = vec![
             Duration::from_secs(1).as_nanos().next_power_of_two(), // 1.07s
             Duration::from_secs(60).as_nanos().next_power_of_two(), // 1.14m
@@ -61,10 +84,8 @@ impl TimerWheel {
             spans,
             shift,
             wheel,
-            nanos: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
+            clock,
+            nanos,
         }
     }
 
@@ -200,10 +221,7 @@ mod tests {
     fn test_find_bucket() {
         let mut metadata = MetaData::new(1000);
         let tw = TimerWheel::new(1000, &mut metadata);
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let now = tw.clock.now_ns();
         // max 1.14m
         for i in [0, 10, 30, 68] {
             let index = tw.find_index(now + Duration::from_secs(i).as_nanos());
@@ -237,10 +255,7 @@ mod tests {
     fn test_schedule() {
         let mut metadata = MetaData::new(1000);
         let mut tw = TimerWheel::new(1000, &mut metadata);
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let now = tw.clock.now_ns();
         for (key, expire) in [("k1", 1u64), ("k2", 69u64), ("k3", 4399u64)] {
             let entry = metadata.get_or_create(key);
             entry.expire = now + Duration::from_secs(expire).as_nanos();
@@ -279,10 +294,7 @@ mod tests {
     fn test_advance() {
         let mut metadata = MetaData::new(1000);
         let mut tw = TimerWheel::new(1000, &mut metadata);
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let now = tw.clock.now_ns();
         let cache = &mut MockCache {
             deleted: Vec::new(),
         };
@@ -388,10 +400,7 @@ mod tests {
     #[test]
     fn test_advance_large() {
         let mut core = TlfuCore::new(1000);
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let now = core.wheel.clock.now_ns();
         let cache = &mut MockCache {
             deleted: Vec::new(),
         };
