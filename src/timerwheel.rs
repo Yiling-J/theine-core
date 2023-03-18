@@ -26,7 +26,11 @@ impl Clock {
     }
 
     pub fn expire_ns(&self, ttl: u128) -> u128 {
-        self.now_ns() + ttl
+        if ttl > 0 {
+            self.now_ns() + ttl
+        } else {
+            0
+        }
     }
 }
 

@@ -97,7 +97,8 @@ impl ClockProCore {
     }
 
     pub fn access(&mut self, key: &str) -> Option<u32> {
-        self.policy.access(key, &mut self.metadata)
+        self.policy
+            .access(key, &self.wheel.clock, &mut self.metadata)
     }
 
     pub fn advance(
@@ -173,7 +174,8 @@ impl TlfuCore {
     }
 
     pub fn access(&mut self, key: &str) -> Option<u32> {
-        self.policy.access(key, &mut self.metadata)
+        self.policy
+            .access(key, &self.wheel.clock, &mut self.metadata)
     }
 
     pub fn advance(
@@ -255,13 +257,7 @@ impl LruCore {
     pub fn access(&mut self, key: &str) -> Option<u32> {
         if let Some(index) = self.metadata.get(key) {
             let entry = &self.metadata.data[index as usize];
-            if entry.expire != 0
-                && entry.expire
-                    <= SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos()
-            {
+            if entry.expire != 0 && entry.expire <= self.wheel.clock.now_ns() {
                 return None;
             }
             self.policy.access(index, &mut self.metadata);
