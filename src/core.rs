@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use crate::{
     clockpro::ClockPro,
     lru::Lru,

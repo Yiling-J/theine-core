@@ -209,7 +209,7 @@ mod tests {
 
     use super::{Cache, TimerWheel};
     use rand::prelude::*;
-    use std::time::{Duration, SystemTime};
+    use std::time::Duration;
 
     struct MockCache {
         deleted: Vec<String>,
@@ -422,10 +422,7 @@ mod tests {
                 &mut core.metadata,
             );
         }
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let now = core.wheel.clock.now_ns();
         for _ in 0..10000 {
             let expire = now + Duration::from_secs(rng.gen_range(110..250)).as_nanos();
             core.set(&format!("{}n", rng.gen_range(0..1000)), expire);
