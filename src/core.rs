@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use crate::{
     clockpro::ClockPro,
     lru::Lru,
@@ -66,13 +64,9 @@ impl ClockProCore {
         }
     }
 
-    pub fn set(
-        &mut self,
-        key: &str,
-        expire: u128,
-    ) -> (u32, Option<u32>, Option<u32>, Option<String>) {
+    pub fn set(&mut self, key: &str, ttl: u128) -> (u32, Option<u32>, Option<u32>, Option<String>) {
         let entry = self.metadata.get_or_create(key);
-        entry.expire = expire;
+        entry.expire = self.wheel.clock.expire_ns(ttl);
         let index = entry.index;
         let mut removed_index = None;
         let mut removed_key = None;
@@ -101,13 +95,13 @@ impl ClockProCore {
     }
 
     pub fn access(&mut self, key: &str) -> Option<u32> {
-        self.policy.access(key, &mut self.metadata)
+        self.policy
+            .access(key, &self.wheel.clock, &mut self.metadata)
     }
 
     pub fn advance(
         &mut self,
         _py: Python,
-        now: u128,
         cache: &PyList,
         sentinel: &PyAny,
         kh: &PyDict,
@@ -119,8 +113,12 @@ impl ClockProCore {
             hk,
             sentinel,
         };
-        self.wheel
-            .advance(now, wrapper, &mut self.policy, &mut self.metadata);
+        self.wheel.advance(
+            self.wheel.clock.now_ns(),
+            wrapper,
+            &mut self.policy,
+            &mut self.metadata,
+        );
     }
 
     pub fn clear(&mut self) {
@@ -145,9 +143,9 @@ impl TlfuCore {
         }
     }
 
-    pub fn set(&mut self, key: &str, expire: u128) -> (u32, Option<u32>, Option<String>) {
+    pub fn set(&mut self, key: &str, ttl: u128) -> (u32, Option<u32>, Option<String>) {
         let entry = self.metadata.get_or_create(key);
-        entry.expire = expire;
+        entry.expire = self.wheel.clock.expire_ns(ttl);
         let index = entry.index;
         let mut evicted_index = 0;
         self.wheel.schedule(index, &mut self.metadata);
@@ -174,13 +172,13 @@ impl TlfuCore {
     }
 
     pub fn access(&mut self, key: &str) -> Option<u32> {
-        self.policy.access(key, &mut self.metadata)
+        self.policy
+            .access(key, &self.wheel.clock, &mut self.metadata)
     }
 
     pub fn advance(
         &mut self,
         _py: Python,
-        now: u128,
         cache: &PyList,
         sentinel: &PyAny,
         kh: &PyDict,
@@ -192,8 +190,12 @@ impl TlfuCore {
             hk,
             sentinel,
         };
-        self.wheel
-            .advance(now, wrapper, &mut self.policy, &mut self.metadata);
+        self.wheel.advance(
+            self.wheel.clock.now_ns(),
+            wrapper,
+            &mut self.policy,
+            &mut self.metadata,
+        );
     }
 
     pub fn clear(&mut self) {
@@ -218,9 +220,9 @@ impl LruCore {
         }
     }
 
-    pub fn set(&mut self, key: &str, expire: u128) -> (u32, Option<u32>, Option<String>) {
+    pub fn set(&mut self, key: &str, ttl: u128) -> (u32, Option<u32>, Option<String>) {
         let entry = self.metadata.get_or_create(key);
-        entry.expire = expire;
+        entry.expire = self.wheel.clock.expire_ns(ttl);
         let index = entry.index;
         let link_id = entry.link_id;
         let mut evicted_index = 0;
@@ -253,13 +255,7 @@ impl LruCore {
     pub fn access(&mut self, key: &str) -> Option<u32> {
         if let Some(index) = self.metadata.get(key) {
             let entry = &self.metadata.data[index as usize];
-            if entry.expire != 0
-                && entry.expire
-                    <= SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos()
-            {
+            if entry.expire != 0 && entry.expire <= self.wheel.clock.now_ns() {
                 return None;
             }
             self.policy.access(index, &mut self.metadata);
@@ -271,7 +267,6 @@ impl LruCore {
     pub fn advance(
         &mut self,
         _py: Python,
-        now: u128,
         cache: &PyList,
         sentinel: &PyAny,
         kh: &PyDict,
@@ -283,8 +278,12 @@ impl LruCore {
             hk,
             sentinel,
         };
-        self.wheel
-            .advance(now, wrapper, &mut self.policy, &mut self.metadata);
+        self.wheel.advance(
+            self.wheel.clock.now_ns(),
+            wrapper,
+            &mut self.policy,
+            &mut self.metadata,
+        );
     }
 
     pub fn clear(&mut self) {

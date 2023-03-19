@@ -1,8 +1,7 @@
-use std::time::{Instant, SystemTime};
-
 use crate::{
     metadata::{Link, MetaData, COLD_PAGE, HOT_PAGE, TEST_PAGE},
     policy::Policy,
+    timerwheel::Clock,
 };
 
 pub struct ClockPro {
@@ -50,16 +49,10 @@ impl ClockPro {
         }
     }
 
-    pub fn access(&mut self, key: &str, metadata: &mut MetaData) -> Option<u32> {
+    pub fn access(&mut self, key: &str, clock: &Clock, metadata: &mut MetaData) -> Option<u32> {
         if let Some(index) = metadata.get(key) {
             let entry = &mut metadata.data[index as usize];
-            if entry.expire != 0
-                && entry.expire
-                    <= SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos()
-            {
+            if entry.expire != 0 && entry.expire <= clock.now_ns() {
                 return None;
             }
             // set reference bit to true
@@ -266,7 +259,10 @@ impl ClockPro {
 
 #[cfg(test)]
 mod tests {
-    use crate::metadata::{MetaData, COLD_PAGE, HOT_PAGE, TEST_PAGE};
+    use crate::{
+        metadata::{MetaData, COLD_PAGE, HOT_PAGE, TEST_PAGE},
+        timerwheel::Clock,
+    };
 
     use super::ClockPro;
 
@@ -277,6 +273,7 @@ mod tests {
     #[test]
     fn test_clock_pro_simple() {
         let mut metadata = MetaData::new(5);
+        let clock = Clock::new();
         let mut policy = ClockPro::new(5, &mut metadata);
 
         for i in 0..5 {
@@ -308,7 +305,7 @@ mod tests {
         assert!(key_to_index("key:9", &mut metadata) < 12);
 
         // set key 1 again, test page -> hot page
-        let index = policy.access("key:1", &mut metadata);
+        let index = policy.access("key:1", &clock, &mut metadata);
         assert!(index.is_none());
         let (test, removed) = policy.set(key_to_index("key:1", &mut metadata), &mut metadata);
         assert!(test.is_some());
@@ -335,7 +332,7 @@ mod tests {
         assert_eq!(policy.count_test, 5);
 
         // move 7 from test to hot: remove 7 from test -> move 12 to test -> add 7 to hot
-        let index = policy.access("key:7", &mut metadata);
+        let index = policy.access("key:7", &clock, &mut metadata);
         assert!(index.is_none());
         let (test, removed) = policy.set(key_to_index("key:7", &mut metadata), &mut metadata);
         assert!(test.is_some());
@@ -347,7 +344,7 @@ mod tests {
 
         // access all
         for i in 0..16 {
-            policy.access(&format!("key:{}", i), &mut metadata);
+            policy.access(&format!("key:{}", i), &clock, &mut metadata);
         }
 
         // insert 16

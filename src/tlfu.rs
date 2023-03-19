@@ -1,9 +1,8 @@
-use std::time::SystemTime;
-
 use crate::lru::{Lru, Slru};
 use crate::metadata::MetaData;
 use crate::policy::Policy;
 use crate::sketch::CountMinSketch;
+use crate::timerwheel::Clock;
 use ahash::RandomState;
 
 pub struct TinyLfu {
@@ -66,17 +65,11 @@ impl TinyLfu {
     }
 
     /// Mark access, update sketch and lru/slru
-    pub fn access(&mut self, key: &str, metadata: &mut MetaData) -> Option<u32> {
+    pub fn access(&mut self, key: &str, clock: &Clock, metadata: &mut MetaData) -> Option<u32> {
         self.sketch.add(self.hasher.hash_one(key.to_string()));
         if let Some(index) = metadata.get(key) {
             let entry = &metadata.data[index as usize];
-            if entry.expire != 0
-                && entry.expire
-                    <= SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos()
-            {
+            if entry.expire != 0 && entry.expire <= clock.now_ns() {
                 return None;
             }
             let link_id = metadata.data[index as usize].link_id;
@@ -98,7 +91,7 @@ impl TinyLfu {
 
 #[cfg(test)]
 mod tests {
-    use crate::metadata::MetaData;
+    use crate::{metadata::MetaData, timerwheel::Clock};
 
     use super::TinyLfu;
     use crate::policy::Policy;
@@ -111,6 +104,7 @@ mod tests {
     fn test_tlfu() {
         let mut metadata = MetaData::new(1000);
         let mut tlfu = TinyLfu::new(1000, &mut metadata);
+        let clock = Clock::new();
         assert_eq!(tlfu.lru.capacity(), 10);
         assert_eq!(tlfu.slru.probation_capacity(), 990);
         assert_eq!(tlfu.slru.protected_capacity(), 792);
@@ -138,7 +132,7 @@ mod tests {
         assert_eq!(tlfu.slru.protected_len(), 0);
 
         // access same key will move the key from probation to protected
-        tlfu.access("key:10", &mut metadata);
+        tlfu.access("key:10", &clock, &mut metadata);
         assert_eq!(tlfu.lru.len(), 10);
         assert_eq!(tlfu.slru.probation_len(), 189);
         assert_eq!(tlfu.slru.protected_len(), 1);
@@ -151,7 +145,7 @@ mod tests {
             tlfu.lru.link.display(false, &metadata)
         );
         // access again, length should be same
-        tlfu.access("key:10", &mut metadata);
+        tlfu.access("key:10", &clock, &mut metadata);
         assert_eq!(tlfu.lru.len(), 10);
         assert_eq!(tlfu.slru.probation_len(), 189);
         assert_eq!(tlfu.slru.protected_len(), 1);
@@ -176,10 +170,10 @@ mod tests {
         // test estimate
         let victim = tlfu.slru.victim(&mut metadata);
         assert_eq!(victim.unwrap(), metadata.get("key:0").unwrap());
-        tlfu.access("key:991", &mut metadata);
-        tlfu.access("key:991", &mut metadata);
-        tlfu.access("key:991", &mut metadata);
-        tlfu.access("key:991", &mut metadata);
+        tlfu.access("key:991", &clock, &mut metadata);
+        tlfu.access("key:991", &clock, &mut metadata);
+        tlfu.access("key:991", &clock, &mut metadata);
+        tlfu.access("key:991", &clock, &mut metadata);
         let evicted = tlfu.set(key_to_index("key:1a", &mut metadata), &mut metadata);
         assert_eq!(evicted.unwrap(), metadata.get("key:992").unwrap());
         assert_eq!(tlfu.slru.probation_len(), 989);
