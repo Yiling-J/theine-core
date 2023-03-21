@@ -64,6 +64,7 @@ impl TinyLfu {
                 } else {
                     self.step += 1
                 }
+                self.step = self.step.clamp(-13, 13);
                 let new_factor = self.lru_factor as isize + self.step as isize;
                 self.lru_factor = new_factor.clamp(0, 13) as usize;
             } else if delta < 0.0 {
