@@ -6,10 +6,16 @@ use crate::timerwheel::Clock;
 use ahash::RandomState;
 
 pub struct TinyLfu {
+    size: usize,
     lru: Lru,
     slru: Slru,
     pub sketch: CountMinSketch,
     hasher: RandomState,
+    lru_factor: usize,
+    total: usize,
+    hit: usize,
+    hr: f32,
+    step: i8,
 }
 
 impl Policy for TinyLfu {
@@ -33,15 +39,49 @@ impl TinyLfu {
         }
         let slru_size = size - lru_size;
         TinyLfu {
+            size,
             lru: Lru::new(lru_size, metadata),
             slru: Slru::new(slru_size, metadata),
             sketch: CountMinSketch::new(size),
             hasher: RandomState::new(),
+            lru_factor: 0,
+            total: 0, // total since last climbing
+            hit: 0,   // hit since last climbing
+            hr: 0.0,  // last hit ratio
+            step: 1,
         }
     }
 
     // add/update key
     pub fn set(&mut self, index: u32, metadata: &mut MetaData) -> Option<u32> {
+        // hill climbing lru factor
+        if self.total >= 10 * self.size && (self.total - self.hit) > self.size / 2 {
+            let current = self.hit as f32 / self.total as f32;
+            let delta = current - self.hr;
+            if delta > 0.0 {
+                if self.step.is_negative() {
+                    self.step -= 1;
+                } else {
+                    self.step += 1
+                }
+                self.step = self.step.clamp(-13, 13);
+                let new_factor = self.lru_factor as isize + self.step as isize;
+                self.lru_factor = new_factor.clamp(0, 13) as usize;
+            } else if delta < 0.0 {
+                // reset
+                if self.step.is_positive() {
+                    self.step = -1;
+                } else {
+                    self.step = 1
+                }
+                let new_factor = self.lru_factor as isize + self.step as isize;
+                self.lru_factor = new_factor.clamp(0, 13) as usize;
+            }
+            self.hr = current;
+            self.hit = 0;
+            self.total = 0;
+        }
+
         let entry = &mut metadata.data[index as usize];
         // new entry
         if entry.link_id == 0 {
@@ -49,7 +89,8 @@ impl TinyLfu {
                 if let Some(victim) = self.slru.victim(metadata) {
                     let ekey = metadata.data[evicted as usize].key.to_string();
                     let vkey = metadata.data[victim as usize].key.to_string();
-                    let evicted_count = self.sketch.estimate(self.hasher.hash_one(ekey));
+                    let evicted_count =
+                        self.sketch.estimate(self.hasher.hash_one(ekey)) + self.lru_factor;
                     let victim_count = self.sketch.estimate(self.hasher.hash_one(vkey));
                     if evicted_count <= victim_count {
                         return Some(evicted);
@@ -67,7 +108,9 @@ impl TinyLfu {
     /// Mark access, update sketch and lru/slru
     pub fn access(&mut self, key: &str, clock: &Clock, metadata: &mut MetaData) -> Option<u32> {
         self.sketch.add(self.hasher.hash_one(key.to_string()));
+        self.total += 1;
         if let Some(index) = metadata.get(key) {
+            self.hit += 1;
             let entry = &metadata.data[index as usize];
             if entry.expire != 0 && entry.expire <= clock.now_ns() {
                 return None;
