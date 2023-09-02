@@ -54,6 +54,9 @@ impl Slru {
     }
 
     pub fn insert(&mut self, index: u32, metadata: &mut MetaData) -> Option<u32> {
+        if self.maxsize == 0 {
+            return Some(index);
+        }
         if self.protected.len + self.probation.len >= self.maxsize as u32 {
             if let Some(evicted) = self.probation.pop_tail(metadata) {
                 self.probation.insert_front(index, metadata);
@@ -67,6 +70,9 @@ impl Slru {
     }
 
     pub fn victim(&mut self, metadata: &mut MetaData) -> Option<u32> {
+        if self.maxsize == 0 {
+            return None;
+        }
         if self.probation.len + self.protected.len < self.maxsize as u32 {
             return None;
         }

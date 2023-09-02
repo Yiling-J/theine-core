@@ -298,6 +298,8 @@ impl LruCore {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::TlfuCore;
+
     use super::LruCore;
 
     #[test]
@@ -309,5 +311,16 @@ mod tests {
         assert_eq!("gfedc", lru.policy.link.display(true, &lru.metadata));
         assert_eq!("cdefg", lru.policy.link.display(false, &lru.metadata));
         assert_eq!(5, lru.metadata.len());
+    }
+
+    #[test]
+    fn test_tlfu_core_size_small() {
+        for size in [1, 2, 3] {
+            let mut tlfu = TlfuCore::new(size);
+            for s in ["a", "b", "c", "d", "e", "f", "g", "g", "g"] {
+                tlfu.set(s, 0);
+            }
+            assert_eq!(size, tlfu.metadata.len());
+        }
     }
 }
