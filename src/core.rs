@@ -317,7 +317,12 @@ mod tests {
     fn test_tlfu_core_size_small() {
         for size in [1, 2, 3] {
             let mut tlfu = TlfuCore::new(size);
-            for s in ["a", "b", "c", "d", "e", "f", "g", "g", "g"] {
+            for s in ["a", "b", "c", "d", "e", "f", "g", "h", "i"] {
+                tlfu.set(s, 0);
+            }
+            assert_eq!(size, tlfu.metadata.len());
+            tlfu.access("a");
+            for s in ["a", "b", "c", "d", "e", "f", "g", "h", "i"] {
                 tlfu.set(s, 0);
             }
             assert_eq!(size, tlfu.metadata.len());

@@ -83,9 +83,11 @@ impl Slru {
         let entry = &mut metadata.data[index as usize];
         match entry.link_id {
             2 => {
-                self.probation.remove(index, metadata);
-                if let Some(evicted) = self.protected.insert_front(index, metadata) {
-                    self.probation.insert_front(evicted, metadata);
+                if self.protected.capacity > 0 {
+                    self.probation.remove(index, metadata);
+                    if let Some(evicted) = self.protected.insert_front(index, metadata) {
+                        self.probation.insert_front(evicted, metadata);
+                    }
                 }
             }
             3 => self.protected.touch(index, metadata),
