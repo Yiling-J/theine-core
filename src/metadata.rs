@@ -365,13 +365,17 @@ impl MetaData {
             let tmp = &mut self.data[index as usize];
             entry.index = index;
             _ = replace(tmp, entry);
-            self.keys.insert(CompactString::new(key), index);
+            if !key.starts_with("__root:") {
+                self.keys.insert(CompactString::new(key), index);
+            }
             &mut self.data[index as usize]
         } else {
             let index = self.data.len();
             entry.index = index as u32;
             self.data.push(entry);
-            self.keys.insert(CompactString::new(key), index as u32);
+            if !key.starts_with("__root:") {
+                self.keys.insert(CompactString::new(key), index as u32);
+            }
             &mut self.data[index]
         }
     }
@@ -387,7 +391,7 @@ impl MetaData {
     }
 
     pub fn len(&self) -> usize {
-        self.keys.len() - self.meta_key_count
+        self.keys.len()
     }
 }
 
@@ -541,6 +545,8 @@ mod tests {
         metadata.remove(index_a);
         assert_eq!(metadata.len(), 1);
         metadata.remove(index_b);
+        assert_eq!(metadata.len(), 0);
+        metadata.clear();
         assert_eq!(metadata.len(), 0);
     }
 }
