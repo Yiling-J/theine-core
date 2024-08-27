@@ -44,7 +44,7 @@ class TlfuCore:
         """
         ...
 
-    def advance(self) -> None:
+    def advance(self) -> List[int]:
         """
         Advances the internal clock and cleans up expired entries.
         """

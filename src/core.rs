@@ -49,13 +49,22 @@ impl TlfuCore {
         }
     }
 
-    pub fn set(&mut self, entries: Vec<(u64, u64)>) -> Vec<u64> {
+    pub fn set(&mut self, entries: Vec<(u64, i64)>) -> Vec<u64> {
         let mut evicted = HashSet::new();
         for entry in entries.iter() {
+            // remove entry
+            if entry.1 == -1 {
+                if let Some(mut removed) = self.entries.remove(&entry.0) {
+                    self.policy.remove(&mut removed);
+                    self.wheel.deschedule(&mut removed);
+                }
+                continue;
+            }
+
             if evicted.contains(&entry.0) {
                 evicted.remove(&entry.0);
             }
-            let ev = self.set_entry(entry.0, entry.1);
+            let ev = self.set_entry(entry.0, entry.1.unsigned_abs());
             if let Some(key) = ev {
                 evicted.insert(key);
             }
@@ -89,7 +98,7 @@ impl TlfuCore {
             .access(key, &self.wheel.clock, &mut self.entries);
     }
 
-    pub fn advance(&mut self) {
+    pub fn advance(&mut self) -> Vec<u64> {
         let removed = self
             .wheel
             .advance(self.wheel.clock.now_ns(), &mut self.entries);
@@ -99,6 +108,7 @@ impl TlfuCore {
                 self.entries.remove(key);
             }
         }
+        removed
     }
 
     pub fn clear(&mut self) {
@@ -116,14 +126,18 @@ impl TlfuCore {
 /// Python's hash function returns i64, which could be negative
 pub fn spread(h: i64) -> u64 {
     let mut z = u64::from_ne_bytes(h.to_ne_bytes());
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
     z = z ^ (z >> 31);
     z
 }
 
 #[cfg(test)]
 mod tests {
+
+    use crate::core::spread;
+    use rand::Rng;
+
     use crate::core::TlfuCore;
 
     #[test]
@@ -135,6 +149,16 @@ mod tests {
             tlfu.access(vec![1]);
             tlfu.set(vec![(1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]);
             assert_eq!(size, tlfu.entries.len());
+        }
+    }
+
+    #[test]
+    fn test_spread() {
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..500000 {
+            let k = rng.gen_range(-i64::MAX..i64::MAX);
+            spread(k);
         }
     }
 }
