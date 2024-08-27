@@ -185,8 +185,6 @@ impl TimerWheel {
                 }
             }
 
-            // clear current bucket and reschedule items in current bucket
-            self.wheel[index][(i & mask) as usize].clear();
             removed_all.append(&mut removed);
         }
         removed_all
