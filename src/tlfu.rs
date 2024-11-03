@@ -1,16 +1,15 @@
-use crate::lru::{Lru, Slru};
-use crate::metadata::MetaData;
-use crate::policy::Policy;
+use crate::lru::Lru;
+use crate::lru::Slru;
+use crate::metadata::Entry;
 use crate::sketch::CountMinSketch;
 use crate::timerwheel::Clock;
-use ahash::RandomState;
+use std::collections::HashMap;
 
 pub struct TinyLfu {
     size: usize,
-    lru: Lru,
-    slru: Slru,
+    window: Lru,
+    main: Slru,
     pub sketch: CountMinSketch,
-    hasher: RandomState,
     lru_factor: usize,
     total: usize,
     hit: usize,
@@ -18,21 +17,8 @@ pub struct TinyLfu {
     step: i8,
 }
 
-impl Policy for TinyLfu {
-    // remove key
-    fn remove(&mut self, index: u32, metadata: &mut MetaData) {
-        let entry = &mut metadata.data[index as usize];
-        match entry.link_id {
-            0 => (),
-            1 => self.lru.remove(index, metadata),
-            2 | 3 => self.slru.remove(index, metadata),
-            _ => unreachable!(),
-        };
-    }
-}
-
 impl TinyLfu {
-    pub fn new(size: usize, metadata: &mut MetaData) -> TinyLfu {
+    pub fn new(size: usize) -> TinyLfu {
         let mut lru_size = (size as f64 * 0.01) as usize;
         if lru_size == 0 {
             lru_size = 1;
@@ -40,10 +26,9 @@ impl TinyLfu {
         let slru_size = size - lru_size;
         TinyLfu {
             size,
-            lru: Lru::new(lru_size, metadata),
-            slru: Slru::new(slru_size, metadata),
+            window: Lru::new(lru_size),
+            main: Slru::new(slru_size),
             sketch: CountMinSketch::new(size),
-            hasher: RandomState::new(),
             lru_factor: 0,
             total: 0, // total since last climbing
             hit: 0,   // hit since last climbing
@@ -53,7 +38,7 @@ impl TinyLfu {
     }
 
     // add/update key
-    pub fn set(&mut self, index: u32, metadata: &mut MetaData) -> Option<u32> {
+    pub fn set(&mut self, key: u64, entries: &mut HashMap<u64, Entry>) -> Option<u64> {
         // hill climbing lru factor
         if self.total >= 10 * self.size && (self.total - self.hit) > self.size / 2 {
             let current = self.hit as f32 / self.total as f32;
@@ -82,23 +67,24 @@ impl TinyLfu {
             self.total = 0;
         }
 
-        let entry = &mut metadata.data[index as usize];
-        // new entry
-        if entry.link_id == 0 {
-            if let Some(evicted) = self.lru.insert(index, metadata) {
-                if let Some(victim) = self.slru.victim(metadata) {
-                    let ekey = metadata.data[evicted as usize].key.to_string();
-                    let vkey = metadata.data[victim as usize].key.to_string();
-                    let evicted_count =
-                        self.sketch.estimate(self.hasher.hash_one(ekey)) + self.lru_factor;
-                    let victim_count = self.sketch.estimate(self.hasher.hash_one(vkey));
-                    if evicted_count <= victim_count {
-                        return Some(evicted);
+        if let Some(entry) = entries.get_mut(&key) {
+            // new entry
+            if entry.policy_list_id == 0 {
+                if let Some(evicted) = self.window.insert(key, entry) {
+                    if let Some(victim) = self.main.victim() {
+                        let evicted_count = self.sketch.estimate(evicted) + self.lru_factor;
+                        let victim_count = self.sketch.estimate(*victim);
+                        if evicted_count <= victim_count {
+                            return Some(evicted);
+                        }
                     }
-                }
-                // reinsert evicted one from lru to slru
-                if let Some(evicted_new) = self.slru.insert(evicted, metadata) {
-                    return Some(evicted_new);
+
+                    // reinsert evicted one from window to main
+                    if let Some(entry) = entries.get_mut(&evicted) {
+                        if let Some(evicted_new) = self.main.insert(evicted, entry) {
+                            return Some(evicted_new);
+                        }
+                    }
                 }
             }
         }
@@ -106,179 +92,161 @@ impl TinyLfu {
     }
 
     /// Mark access, update sketch and lru/slru
-    pub fn access(&mut self, key: &str, clock: &Clock, metadata: &mut MetaData) -> Option<u32> {
-        self.sketch.add(self.hasher.hash_one(key.to_string()));
+    pub fn access(&mut self, key: u64, clock: &Clock, entries: &mut HashMap<u64, Entry>) {
+        self.sketch.add(key);
         self.total += 1;
-        if let Some(index) = metadata.get(key) {
+
+        if let Some(entry) = entries.get_mut(&key) {
             self.hit += 1;
-            let entry = &metadata.data[index as usize];
             if entry.expire != 0 && entry.expire <= clock.now_ns() {
-                return None;
+                return;
             }
-            let link_id = metadata.data[index as usize].link_id;
-            match link_id {
-                1 => self.lru.access(index, metadata),
-                2 | 3 => self.slru.access(index, metadata),
-                _ => unreachable!(),
+
+            if let Some(index) = entry.policy_list_index {
+                match entry.policy_list_id {
+                    1 => self.window.access(index),
+                    2 | 3 => self.main.access(key, entries),
+                    _ => unreachable!(),
+                }
             }
-            return Some(index);
         }
-        None
     }
 
     /// Current length of policy(lru + slru)
     pub fn len(&self) -> usize {
-        self.lru.len() + self.slru.protected_len() + self.slru.probation_len()
+        self.window.len() + self.main.protected_len() + self.main.probation_len()
+    }
+
+    // remove key
+    pub fn remove(&mut self, entry: &mut Entry) {
+        match entry.policy_list_id {
+            0 => (),
+            1 => self.window.remove(entry),
+            2 | 3 => self.main.remove(entry),
+            _ => unreachable!(),
+        };
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{metadata::MetaData, timerwheel::Clock};
+    use std::collections::HashMap;
+
+    use crate::{metadata::Entry, timerwheel::Clock};
 
     use super::TinyLfu;
-    use crate::policy::Policy;
-
-    fn key_to_index(key: &str, metadata: &mut MetaData) -> u32 {
-        metadata.get_or_create(key).index
-    }
 
     #[test]
     fn test_tlfu() {
-        let mut metadata = MetaData::new(1000);
-        let mut tlfu = TinyLfu::new(1000, &mut metadata);
+        let mut tlfu = TinyLfu::new(1000);
         let clock = Clock::new();
-        assert_eq!(tlfu.lru.capacity(), 10);
-        assert_eq!(tlfu.slru.probation_capacity(), 990);
-        assert_eq!(tlfu.slru.protected_capacity(), 792);
-        assert_eq!(tlfu.slru.probation_len(), 0);
-        assert_eq!(tlfu.slru.protected_len(), 0);
+        let mut entries = HashMap::new();
+        assert_eq!(tlfu.window.list.capacity, 10);
+        assert_eq!(tlfu.main.probation.capacity, 990);
+        assert_eq!(tlfu.main.protected.capacity, 792);
+        assert_eq!(tlfu.main.probation_len(), 0);
+        assert_eq!(tlfu.main.protected_len(), 0);
 
         for i in 0..200 {
-            let evicted = tlfu.set(
-                key_to_index(&format!("key:{}", i), &mut metadata),
-                &mut metadata,
-            );
+            let entry = Entry::new();
+            entries.insert(i, entry);
+            let evicted = tlfu.set(i, &mut entries);
             assert!(evicted.is_none());
         }
+
         assert_eq!(
-            "key:199key:198key:197key:196key:195key:194key:193key:192key:191key:190",
-            tlfu.lru.link.display(true, &metadata)
-        );
-        assert_eq!(
-            "key:190key:191key:192key:193key:194key:195key:196key:197key:198key:199",
-            tlfu.lru.link.display(false, &metadata)
+            vec![199, 198, 197, 196, 195, 194, 193, 192, 191, 190],
+            tlfu.window.list.iter().map(|i| *i).collect::<Vec<u64>>(),
         );
 
-        assert_eq!(tlfu.lru.len(), 10);
-        assert_eq!(tlfu.slru.probation_len(), 190);
-        assert_eq!(tlfu.slru.protected_len(), 0);
+        assert_eq!(tlfu.window.len(), 10);
+        assert_eq!(tlfu.main.probation_len(), 190);
+        assert_eq!(tlfu.main.protected_len(), 0);
 
         // access same key will move the key from probation to protected
-        tlfu.access("key:10", &clock, &mut metadata);
-        assert_eq!(tlfu.lru.len(), 10);
-        assert_eq!(tlfu.slru.probation_len(), 189);
-        assert_eq!(tlfu.slru.protected_len(), 1);
+        tlfu.access(10, &clock, &mut entries);
+        assert_eq!(tlfu.window.len(), 10);
+        assert_eq!(tlfu.main.probation_len(), 189);
+        assert_eq!(tlfu.main.protected_len(), 1);
         assert_eq!(
-            "key:199key:198key:197key:196key:195key:194key:193key:192key:191key:190",
-            tlfu.lru.link.display(true, &metadata)
+            vec![199, 198, 197, 196, 195, 194, 193, 192, 191, 190],
+            tlfu.window.list.iter().map(|i| *i).collect::<Vec<u64>>(),
         );
-        assert_eq!(
-            "key:190key:191key:192key:193key:194key:195key:196key:197key:198key:199",
-            tlfu.lru.link.display(false, &metadata)
-        );
+
         // access again, length should be same
-        tlfu.access("key:10", &clock, &mut metadata);
-        assert_eq!(tlfu.lru.len(), 10);
-        assert_eq!(tlfu.slru.probation_len(), 189);
-        assert_eq!(tlfu.slru.protected_len(), 1);
+        tlfu.access(10, &clock, &mut entries);
+        assert_eq!(tlfu.window.len(), 10);
+        assert_eq!(tlfu.main.probation_len(), 189);
+        assert_eq!(tlfu.main.protected_len(), 1);
         // fill tlfu
         for i in 200..1000 {
-            let evicted = tlfu.set(
-                key_to_index(&format!("key:{}", i), &mut metadata),
-                &mut metadata,
-            );
+            let entry = Entry::new();
+            entries.insert(i, entry);
+            let evicted = tlfu.set(i, &mut entries);
             assert!(evicted.is_none());
         }
-        assert_eq!(tlfu.lru.len(), 10);
-        assert_eq!(tlfu.slru.probation_len(), 989);
-        assert_eq!(tlfu.slru.protected_len(), 1);
+        assert_eq!(tlfu.window.len(), 10);
+        assert_eq!(tlfu.main.probation_len(), 989);
+        assert_eq!(tlfu.main.protected_len(), 1);
         // set again, should evicate one
-        let evicted = tlfu.set(key_to_index("key:0a", &mut metadata), &mut metadata);
+        let entry = Entry::new();
+        entries.insert(9876, entry);
+        let evicted = tlfu.set(9876, &mut entries);
         // lru size is 10, and last 10 is 990-1000, so evicate 990
-        assert_eq!(evicted.unwrap(), metadata.get("key:990").unwrap());
-        assert_eq!(tlfu.lru.len(), 10);
-        assert_eq!(tlfu.slru.probation_len(), 989);
-        assert_eq!(tlfu.slru.protected_len(), 1);
+        assert_eq!(evicted.unwrap(), 990);
+        assert_eq!(tlfu.window.len(), 10);
+        assert_eq!(tlfu.main.probation_len(), 989);
+        assert_eq!(tlfu.main.protected_len(), 1);
         // test estimate
-        let victim = tlfu.slru.victim(&mut metadata);
-        assert_eq!(victim.unwrap(), metadata.get("key:0").unwrap());
-        tlfu.access("key:991", &clock, &mut metadata);
-        tlfu.access("key:991", &clock, &mut metadata);
-        tlfu.access("key:991", &clock, &mut metadata);
-        tlfu.access("key:991", &clock, &mut metadata);
-        let evicted = tlfu.set(key_to_index("key:1a", &mut metadata), &mut metadata);
-        assert_eq!(evicted.unwrap(), metadata.get("key:992").unwrap());
-        assert_eq!(tlfu.slru.probation_len(), 989);
+        let victim = tlfu.main.victim();
+        assert_eq!(*victim.unwrap(), 0);
+
+        // 991 moved to window front, and sketch is updated
+        tlfu.access(991, &clock, &mut entries);
+        tlfu.access(991, &clock, &mut entries);
+        tlfu.access(991, &clock, &mut entries);
+        tlfu.access(991, &clock, &mut entries);
+        let entry = Entry::new();
+        entries.insert(9877, entry);
+        let evicted = tlfu.set(9877, &mut entries);
+        assert_eq!(evicted.unwrap(), 992);
+        assert_eq!(tlfu.main.probation_len(), 989);
 
         for i in 0..1000 {
-            tlfu.set(
-                key_to_index(&format!("key:{}:b", i), &mut metadata),
-                &mut metadata,
-            );
+            let entry = Entry::new();
+            entries.insert(10000 + i, entry);
+            tlfu.set(10000 + i, &mut entries);
         }
-        assert_eq!(tlfu.lru.len(), 10);
-        assert_eq!(tlfu.slru.probation_len(), 989);
-        assert_eq!(tlfu.slru.protected_len(), 1);
+        assert_eq!(tlfu.window.len(), 10);
+        assert_eq!(tlfu.main.probation_len(), 989);
+        assert_eq!(tlfu.main.protected_len(), 1);
+        // 991 shoud be in main cache now
 
         // test remove
         assert_eq!(
-            "key:999:bkey:998:bkey:997:bkey:996:bkey:995:bkey:994:bkey:993:bkey:992:bkey:991:bkey:990:b",
-            tlfu.lru.link.display(true, &metadata)
+            vec![10999, 10998, 10997, 10996, 10995, 10994, 10993, 10992, 10991, 10990],
+            tlfu.window.list.iter().map(|i| *i).collect::<Vec<u64>>(),
         );
-        tlfu.remove(metadata.get("key:996:b").unwrap(), &mut metadata);
+
+        tlfu.remove(entries.get_mut(&10996).unwrap());
         assert_eq!(
-            "key:999:bkey:998:bkey:997:bkey:995:bkey:994:bkey:993:bkey:992:bkey:991:bkey:990:b",
-            tlfu.lru.link.display(true, &metadata)
+            vec![10999, 10998, 10997, 10995, 10994, 10993, 10992, 10991, 10990],
+            tlfu.window.list.iter().map(|i| *i).collect::<Vec<u64>>(),
         );
-        assert_eq!(
-            "key:990:bkey:991:bkey:992:bkey:993:bkey:994:bkey:995:bkey:997:bkey:998:bkey:999:b",
-            tlfu.lru.link.display(false, &metadata)
-        );
-        for key in [
-            "key:0:b",
-            "key:20:b",
-            "key:300:b",
-            "key:500:b",
-            "key:899:b",
-            "key:999:b",
-        ] {
-            tlfu.remove(metadata.get(key).unwrap(), &mut metadata);
-            tlfu.slru.probation.display(true, &metadata);
-            tlfu.slru.probation.display(false, &metadata);
-            tlfu.slru.protected.display(true, &metadata);
-            tlfu.slru.protected.display(false, &metadata);
-        }
     }
 
     #[test]
     fn test_tlfu_set_same() {
-        let mut metadata = MetaData::new(1000);
-        let mut tlfu = TinyLfu::new(1000, &mut metadata);
+        let mut tlfu = TinyLfu::new(1000);
+        let mut entries = HashMap::new();
 
         for i in 0..200 {
-            let evicted = tlfu.set(
-                key_to_index(&format!("key:{}", i), &mut metadata),
-                &mut metadata,
-            );
+            let evicted = tlfu.set(i, &mut entries);
             assert!(evicted.is_none());
         }
 
         for i in 0..200 {
-            let evicted = tlfu.set(
-                key_to_index(&format!("key:{}", i), &mut metadata),
-                &mut metadata,
-            );
+            let evicted = tlfu.set(i, &mut entries);
             assert!(evicted.is_none());
         }
     }

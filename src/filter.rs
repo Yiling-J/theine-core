@@ -1,4 +1,3 @@
-use ahash::RandomState;
 use pyo3::prelude::*;
 
 #[pyclass]
@@ -8,7 +7,6 @@ pub struct BloomFilter {
     slice_count: usize,
     bits: Vec<u64>,
     additions: usize,
-    hasher: RandomState,
 }
 
 #[pymethods]
@@ -27,42 +25,39 @@ impl BloomFilter {
             slice_count: (ln2 * bits as f64 / insertions as f64) as usize,
             bits: vec![0; (bits + 63) / 64],
             additions: 0,
-            hasher: RandomState::new(),
         }
     }
 
-    pub fn put(&mut self, key: &str) {
-        let h = self.hasher.hash_one(key);
+    pub fn put(&mut self, key: u64) {
         self.additions += 1;
         if self.additions == self.insertions {
             self.reset();
         }
         for i in 0..self.slice_count {
-            let hash = h + (i as u64) * (h >> 32);
+            let hash = key + (i as u64) * (key >> 32);
             self.set(hash & self.bits_mask as u64);
         }
     }
 
-    fn get(&self, h: u64) -> bool {
-        let idx = h >> 6;
-        let offset = h & 63;
+    fn get(&self, key: u64) -> bool {
+        let idx = key >> 6;
+        let offset = key & 63;
         let mask = 1u64 << offset;
         let val = self.bits[idx as usize];
         ((val & mask) >> offset) != 0
     }
 
-    fn set(&mut self, h: u64) {
-        let idx = h >> 6;
-        let offset = h & 63;
+    fn set(&mut self, key: u64) {
+        let idx = key >> 6;
+        let offset = key & 63;
         let mask = 1u64 << offset;
         self.bits[idx as usize] |= mask;
     }
 
-    pub fn contains(&self, key: &str) -> bool {
-        let h = self.hasher.hash_one(key);
+    pub fn contains(&self, key: u64) -> bool {
         let mut o = true;
         for i in 0..self.slice_count {
-            let hash = h + i as u64 * (h >> 32);
+            let hash = key + i as u64 * (key >> 32);
             o &= self.get(hash & self.bits_mask as u64);
         }
         o
@@ -84,19 +79,19 @@ mod tests {
         assert_eq!(bf.slice_count, 14);
         assert_eq!(bf.bits.len(), 32);
         for i in 0..100 {
-            let exist = bf.contains(&format!("key:{}", i));
+            let exist = bf.contains(i);
             assert!(!exist);
-            bf.put(&format!("key:{}", i));
+            bf.put(i);
         }
         bf.reset();
         for i in 0..40 {
-            let exist = bf.contains(&format!("key:{}", i));
+            let exist = bf.contains(i);
             assert!(!exist);
-            bf.put(&format!("key:{}", i));
+            bf.put(i);
         }
         // test exists
         for i in 0..40 {
-            let exist = bf.contains(&format!("key:{}", i));
+            let exist = bf.contains(i);
             assert!(exist);
         }
     }
