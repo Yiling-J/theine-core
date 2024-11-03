@@ -94,12 +94,29 @@ impl CountMinSketch {
         let min = s.iter().min().unwrap();
         *min
     }
+
+    #[cfg(test)]
+    fn table_counters(&self) -> Vec<Vec<i32>> {
+        self.table
+            .iter()
+            .map(|&val| uint64_to_base10_slice(val))
+            .collect()
+    }
 }
 
 fn rehash(h: u64) -> u64 {
     let mut h = h.wrapping_mul(0x94d049bb133111eb);
     h ^= h >> 31;
     h
+}
+
+#[cfg(test)]
+fn uint64_to_base10_slice(n: u64) -> Vec<i32> {
+    let mut result = vec![0; 16];
+    for i in 0..16 {
+        result[15 - i] = ((n >> (i * 4)) & 0xF) as i32;
+    }
+    result
 }
 
 #[cfg(test)]
@@ -160,6 +177,12 @@ mod tests {
         assert_eq!(sketch.estimate(h), 15);
         sketch.reset();
         assert_eq!(sketch.estimate(h), 7);
+
+        for i in sketch.table_counters().iter() {
+            for c in i.iter() {
+                assert_eq!(*c, 7);
+            }
+        }
     }
 
     #[test]
