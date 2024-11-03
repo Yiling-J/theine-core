@@ -88,6 +88,7 @@ jobs:
           apt -y install python3.10
           apt -y install python3.11
           apt -y install python3.12
+          apt -y install python3.13
           apt -y install python3-pip
           pip install maturin
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
