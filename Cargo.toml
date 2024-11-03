@@ -9,9 +9,9 @@ name = "theine_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-ahash = "0.8.2"
-compact_str = "0.7.0"
+dlv-list = "0.5.2"
 pyo3 = { version = "0.17.3", features = ["extension-module"] }
 
 [dev-dependencies]
+ahash = "0.8.11"
 rand = "0.8.5"
