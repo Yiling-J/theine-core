@@ -10,7 +10,11 @@ pub struct CountMinSketch {
 
 impl CountMinSketch {
     pub fn new(size: usize) -> CountMinSketch {
-        let counter_size = size.next_power_of_two();
+        let mut sketch_size = size;
+        if sketch_size < 64 {
+            sketch_size = 16;
+        }
+        let counter_size = sketch_size.next_power_of_two();
         let block_mask = (counter_size >> 3) - 1;
         let table = vec![0; counter_size];
         CountMinSketch {
