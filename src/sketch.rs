@@ -121,10 +121,9 @@ fn uint64_to_base10_slice(n: u64) -> Vec<i32> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        hash::{BuildHasher, RandomState},
-    };
+    use std::collections::HashMap;
+
+    use ahash::RandomState;
 
     use super::CountMinSketch;
 
@@ -135,7 +134,7 @@ mod tests {
         assert_eq!(sketch.block_mask, 2047);
         assert_eq!(sketch.sample_size, 163840);
 
-        let hasher = RandomState::new();
+        let hasher = RandomState::with_seeds(9, 0, 7, 2);
         let mut failed = 0;
         for i in 0..8000 {
             let key = format!("foo:bar:{}", i);
@@ -172,7 +171,7 @@ mod tests {
             *i = !0;
         }
         sketch.additions = 100000;
-        let hasher = RandomState::new();
+        let hasher = RandomState::with_seeds(9, 0, 7, 2);
         let h = hasher.hash_one("foo");
         assert_eq!(sketch.estimate(h), 15);
         sketch.reset();
@@ -188,7 +187,7 @@ mod tests {
     #[test]
     fn test_sketch_reset_addition() {
         let mut sketch = CountMinSketch::new(500);
-        let hasher = RandomState::new();
+        let hasher = RandomState::with_seeds(9, 0, 7, 2);
         let mut counts = HashMap::new();
         for i in 0..5 {
             let key = format!("foo:bar:{}", i);
@@ -235,7 +234,7 @@ mod tests {
     #[test]
     fn test_sketch_heavy_hitters() {
         let mut sketch = CountMinSketch::new(512);
-        let hasher = RandomState::new();
+        let hasher = RandomState::with_seeds(9, 0, 7, 2);
 
         for i in 100..100000 {
             let h = hasher.hash_one(format!("k:{}", i));
