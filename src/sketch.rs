@@ -208,4 +208,41 @@ mod tests {
 
         assert_eq!(total_before - sketch.additions, diff);
     }
+
+    #[test]
+    fn test_sketch_heavy_hitters() {
+        let mut sketch = CountMinSketch::new(512);
+        let hasher = RandomState::new();
+
+        for i in 100..100000 {
+            let h = hasher.hash_one(format!("k:{}", i));
+            sketch.add(h);
+        }
+
+        for i in (0..10).step_by(2) {
+            for _ in 0..i {
+                let h = hasher.hash_one(format!("k:{}", i));
+                sketch.add(h);
+            }
+        }
+
+        // A perfect popularity count yields an array [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
+        let mut popularity = vec![0; 10];
+        for i in 0..10 {
+            let h = hasher.hash_one(format!("k:{}", i));
+            popularity[i] = sketch.estimate(h) as i32;
+        }
+
+        for (i, &pop_count) in popularity.iter().enumerate() {
+            if [0, 1, 3, 5, 7, 9].contains(&i) {
+                assert!(pop_count <= popularity[2]);
+            } else if i == 2 {
+                assert!(popularity[2] <= popularity[4]);
+            } else if i == 4 {
+                assert!(popularity[4] <= popularity[6]);
+            } else if i == 6 {
+                assert!(popularity[6] <= popularity[8]);
+            }
+        }
+    }
 }
