@@ -12,7 +12,7 @@ impl CountMinSketch {
     pub fn new(size: usize) -> CountMinSketch {
         let mut sketch_size = size;
         if sketch_size < 64 {
-            sketch_size = 16;
+            sketch_size = 64;
         }
         let counter_size = sketch_size.next_power_of_two();
         let block_mask = (counter_size >> 3) - 1;
