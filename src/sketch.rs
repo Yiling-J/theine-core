@@ -5,7 +5,7 @@ pub struct CountMinSketch {
     block_mask: usize,
     table: Vec<u64>,
     additions: usize,
-    sample_size: usize,
+    pub sample_size: usize,
 }
 
 impl CountMinSketch {

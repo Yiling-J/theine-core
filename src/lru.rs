@@ -13,11 +13,10 @@ impl Lru {
         }
     }
 
-    pub fn insert(&mut self, key: u64, entry: &mut Entry) -> Option<u64> {
-        let (index, evicted) = self.list.insert_front(key);
+    pub fn insert(&mut self, key: u64, entry: &mut Entry) {
+        let index = self.list.insert_front(key);
         entry.policy_list_index = Some(index);
         entry.policy_list_id = 1;
-        evicted
     }
 
     pub fn access(&mut self, index: Index<u64>) {
@@ -51,25 +50,10 @@ impl Slru {
         }
     }
 
-    pub fn insert(&mut self, key: u64, entry: &mut Entry) -> Option<u64> {
-        if self.maxsize == 0 {
-            return Some(key);
-        }
-
-        // probation list capacity is dynamic (max_size - protected_current_size),
-        // if max_size reach, remove the tail entry from probation and insert new
-        if self.protected.len() + self.probation.len() >= self.maxsize {
-            if let Some(evicted) = self.probation.pop_tail() {
-                let (index, _) = self.probation.insert_front(key);
-                entry.policy_list_index = Some(index);
-                entry.policy_list_id = 2;
-                return Some(evicted);
-            }
-        }
-        let (index, evicted) = self.probation.insert_front(key);
+    pub fn insert(&mut self, key: u64, entry: &mut Entry) {
+        let index = self.probation.insert_front(key);
         entry.policy_list_index = Some(index);
         entry.policy_list_id = 2;
-        evicted
     }
 
     pub fn victim(&mut self) -> Option<&u64> {
@@ -86,20 +70,10 @@ impl Slru {
         if let Some(entry) = entries.get_mut(&key) {
             match entry.policy_list_id {
                 2 => {
-                    if self.protected.capacity > 0 {
-                        self.probation.remove(entry.policy_list_index.unwrap());
-                        let (index, evicted) = self.protected.insert_front(key);
-                        entry.policy_list_index = Some(index);
-                        entry.policy_list_id = 3;
-
-                        if let Some(ek) = evicted {
-                            if let Some(ev) = entries.get_mut(&ek) {
-                                let (index, _) = self.probation.insert_front(ek);
-                                ev.policy_list_index = Some(index);
-                                ev.policy_list_id = 2;
-                            }
-                        }
-                    }
+                    self.probation.remove(entry.policy_list_index.unwrap());
+                    let index = self.protected.insert_front(key);
+                    entry.policy_list_index = Some(index);
+                    entry.policy_list_id = 3;
                 }
                 3 => self.protected.touch(entry.policy_list_index.unwrap()),
                 _ => unreachable!(),

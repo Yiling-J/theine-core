@@ -84,7 +84,7 @@ impl TimerWheel {
         for bucket in buckets.iter().take(5) {
             let mut tmp = Vec::new();
             for _ in 0..*bucket {
-                tmp.push(List::new_unbounded(8));
+                tmp.push(List::new(8));
             }
             wheel.push(tmp);
         }
@@ -116,7 +116,7 @@ impl TimerWheel {
         if entry.expire > 0 {
             let w_index = self.find_index(entry.expire);
             entry.wheel_index = w_index;
-            let (index, _) = self.wheel[w_index.0 as usize][w_index.1 as usize].insert_front(key);
+            let index = self.wheel[w_index.0 as usize][w_index.1 as usize].insert_front(key);
             entry.wheel_list_index = Some(index);
         }
     }
