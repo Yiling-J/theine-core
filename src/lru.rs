@@ -37,14 +37,12 @@ impl Lru {
 pub struct Slru {
     pub probation: List<u64>,
     pub protected: List<u64>,
-    maxsize: usize,
 }
 
 impl Slru {
     pub fn new(maxsize: usize) -> Slru {
         let protected_cap = (maxsize as f64 * 0.8) as usize;
         Slru {
-            maxsize,
             probation: List::new(maxsize),
             protected: List::new(protected_cap),
         }
@@ -54,16 +52,6 @@ impl Slru {
         let index = self.probation.insert_front(key);
         entry.policy_list_index = Some(index);
         entry.policy_list_id = 2;
-    }
-
-    pub fn victim(&mut self) -> Option<&u64> {
-        if self.maxsize == 0 {
-            return None;
-        }
-        if self.probation.len() + self.protected.len() < self.maxsize {
-            return None;
-        }
-        self.probation.tail()
     }
 
     pub fn access(&mut self, key: u64, entries: &mut HashMap<u64, Entry>) {
@@ -89,13 +77,5 @@ impl Slru {
                 _ => unreachable!(),
             };
         }
-    }
-
-    pub fn protected_len(&self) -> usize {
-        self.protected.len()
-    }
-
-    pub fn probation_len(&self) -> usize {
-        self.probation.len()
     }
 }

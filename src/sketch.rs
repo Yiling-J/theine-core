@@ -224,8 +224,8 @@ mod tests {
             diff += es1_prev - es1;
             diff += es2_prev - es2;
 
-            assert_eq!(es1, es1_prev / 2 as usize);
-            assert_eq!(es2, es2_prev / 2 as usize);
+            assert_eq!(es1, es1_prev / 2_usize);
+            assert_eq!(es2, es2_prev / 2_usize);
         }
 
         assert_eq!(total_before - sketch.additions, diff);
@@ -249,7 +249,7 @@ mod tests {
         }
 
         // A perfect popularity count yields an array [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
-        let mut popularity = vec![0; 10];
+        let mut popularity = [0; 10];
         for i in 0..10 {
             let h = hasher.hash_one(format!("k:{}", i));
             popularity[i] = sketch.estimate(h) as i32;

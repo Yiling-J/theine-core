@@ -26,8 +26,9 @@ impl Entry {
     }
 }
 
+#[derive(Debug)]
 pub struct List<T> {
-    list: VecList<T>,
+    pub list: VecList<T>,
     pub capacity: usize,
 }
 
@@ -47,12 +48,11 @@ impl<T> List<T> {
     /// Insert entry to list front and return evicted key
     pub fn insert_front(&mut self, entry: T) -> Index<T> {
         if let Some(index) = self.list.front_index() {
-            let index = self.list.insert_before(index, entry);
-            index
+            self.list.insert_before(index, entry)
         } else {
             // no frony entry, list is empty
-            let index = self.list.push_front(entry);
-            index
+
+            self.list.push_front(entry)
         }
     }
 

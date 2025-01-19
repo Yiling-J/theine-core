@@ -250,7 +250,7 @@ mod tests {
             let mut entry = Entry::new();
             entry.expire = now + Duration::from_secs(expire).as_nanos() as u64;
             tw.schedule(key, &mut entry);
-            assert!(entry.wheel_list_index != None);
+            assert!(entry.wheel_list_index.is_some());
             entries.insert(key, entry);
         }
 
@@ -263,7 +263,7 @@ mod tests {
             if let Some(entry) = entries.get_mut(&key) {
                 tw.deschedule(entry);
                 assert!(entry.wheel_index == (0, 0));
-                assert!(entry.wheel_list_index == None);
+                assert!(entry.wheel_list_index.is_none());
             } else {
                 assert!(false, "entry not found");
             }
