@@ -215,9 +215,7 @@ impl TinyLfu {
         }
 
         self.demote_from_protected(entries);
-        self.evict_entries(entries);
-
-        None
+        self.evict_entries(entries)
     }
 
     /// Mark access, update sketch and lru/slru
@@ -276,11 +274,16 @@ impl TinyLfu {
     // comapre and evict entries until cache size fit.
     // candidate is the first entry evicted from window,
     // if head is null, start from last entry from window.
-    fn evict_from_main(&mut self, candidate: Option<u64>, entries: &mut HashMap<u64, Entry>) {
+    fn evict_from_main(
+        &mut self,
+        candidate: Option<u64>,
+        entries: &mut HashMap<u64, Entry>,
+    ) -> Option<u64> {
         let mut victim_queue = PolicyList::Probation;
         let mut candidate_queue = PolicyList::Probation;
         let mut victim = self.main.probation.tail().copied();
         let mut candidate = candidate;
+        let mut evicted = None;
 
         while self.size > self.capacity {
             if candidate.is_none() && candidate_queue == PolicyList::Probation {
@@ -307,6 +310,7 @@ impl TinyLfu {
                 if let Some(key) = evict {
                     if let Some(entry) = entries.get_mut(&key) {
                         self.remove(entry);
+                        evicted = Some(key);
                     }
                 }
                 continue;
@@ -316,6 +320,7 @@ impl TinyLfu {
                 if let Some(key) = evict {
                     if let Some(entry) = entries.get_mut(&key) {
                         self.remove(entry);
+                        evicted = Some(key);
                     }
                 }
                 continue;
@@ -326,6 +331,7 @@ impl TinyLfu {
                 if let Some(key) = candidate {
                     if let Some(entry) = entries.get_mut(&key) {
                         self.remove(entry);
+                        evicted = Some(key);
                     }
                 }
                 candidate = None;
@@ -338,6 +344,7 @@ impl TinyLfu {
                 if let Some(key) = evict {
                     if let Some(entry) = entries.get_mut(&key) {
                         self.remove(entry);
+                        evicted = Some(key);
                     }
                 }
                 candidate = self.prev_key(candidate, entries);
@@ -347,10 +354,12 @@ impl TinyLfu {
                 if let Some(key) = evict {
                     if let Some(entry) = entries.get_mut(&key) {
                         self.remove(entry);
+                        evicted = Some(key);
                     }
                 }
             }
         }
+        evicted
     }
 
     fn prev_key(&self, key: Option<u64>, entries: &mut HashMap<u64, Entry>) -> Option<u64> {
@@ -367,9 +376,9 @@ impl TinyLfu {
         }
     }
 
-    fn evict_entries(&mut self, entries: &mut HashMap<u64, Entry>) {
+    fn evict_entries(&mut self, entries: &mut HashMap<u64, Entry>) -> Option<u64> {
         let first = self.evict_from_window(entries);
-        self.evict_from_main(first, entries);
+        self.evict_from_main(first, entries)
     }
 
     fn admit(&self, candidate: u64, victim: u64) -> bool {

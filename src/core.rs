@@ -141,7 +141,34 @@ mod tests {
     use crate::core::TlfuCore;
 
     #[test]
-    fn test_tlfu_core_size_small() {
+    fn test_set() {
+        let mut tlfu = TlfuCore::new(1000);
+        tlfu.set(vec![(1, 0), (2, 0), (3, 0)]);
+        let mut s = tlfu.entries.keys().cloned().collect::<Vec<_>>();
+        s.sort();
+        assert_eq!(vec![1, 2, 3], s);
+        tlfu.set(vec![(3, -1), (4, 0), (3, 0)]);
+        s = tlfu.entries.keys().cloned().collect::<Vec<_>>();
+        s.sort();
+        assert_eq!(vec![1, 2, 3, 4], s);
+        tlfu.set(vec![(3, -1), (4, 0)]);
+        s = tlfu.entries.keys().cloned().collect::<Vec<_>>();
+        s.sort();
+        assert_eq!(vec![1, 2, 4], s);
+    }
+
+    #[test]
+    fn test_remove() {
+        let mut tlfu = TlfuCore::new(1000);
+        tlfu.set(vec![(1, 0), (2, 0), (3, 0)]);
+        tlfu.remove(2);
+        let mut s = tlfu.entries.keys().cloned().collect::<Vec<_>>();
+        s.sort();
+        assert_eq!(vec![1, 3], s);
+    }
+
+    #[test]
+    fn test_size_small() {
         for size in [1, 2, 3] {
             let mut tlfu = TlfuCore::new(size);
             tlfu.set(vec![(1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]);
