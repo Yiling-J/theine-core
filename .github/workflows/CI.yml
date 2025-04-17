@@ -2,6 +2,9 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+      - ci_test
     tags:
       - '*'
   pull_request:
