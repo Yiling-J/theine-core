@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 ahash = "0.8.2"
 compact_str = "0.7.0"
-pyo3 = { version = "0.17.3", features = ["extension-module"] }
+pyo3 = { version = "0.23.5", features = ["extension-module"] }
 
 [dev-dependencies]
 rand = "0.8.5"
