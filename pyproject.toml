@@ -1,10 +1,10 @@
 [build-system]
-requires = ["maturin>=0.14,<0.15"]
+requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "theine_core"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 license = {text = "BSD-3-Clause"}
 classifiers = [
     "Programming Language :: Rust",

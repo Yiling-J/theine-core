@@ -8,14 +8,14 @@ use crate::{
 };
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyList},
+    types::{PyDict, PyDictMethods, PyList, PyListMethods},
 };
 
-struct PyCache<'a> {
-    list: &'a PyList,
-    kh: &'a PyDict,
-    hk: &'a PyDict,
-    sentinel: &'a PyAny,
+struct PyCache<'py> {
+    list: Bound<'py, PyList>,
+    kh: Bound<'py, PyDict>,
+    hk: Bound<'py, PyDict>,
+    sentinel: &'py Bound<'py, PyAny>,
 }
 
 impl<'a> Cache for PyCache<'a> {
@@ -23,7 +23,7 @@ impl<'a> Cache for PyCache<'a> {
         let _ = self.list.set_item(index as usize, self.sentinel);
         if let Some(nkey) = key.strip_prefix("_auto:") {
             let num: u64 = nkey.parse().unwrap();
-            if let Some(keyh) = self.kh.get_item(num) {
+            if let Some(keyh) = self.kh.get_item(num).ok() {
                 let _ = self.kh.del_item(num);
                 let _ = self.hk.del_item(keyh);
             }
@@ -99,13 +99,13 @@ impl ClockProCore {
             .access(key, &self.wheel.clock, &mut self.metadata)
     }
 
-    pub fn advance(
+    pub fn advance<'py>(
         &mut self,
         _py: Python,
-        cache: &PyList,
-        sentinel: &PyAny,
-        kh: &PyDict,
-        hk: &PyDict,
+        cache: Bound<'py, PyList>,
+        sentinel: &'py Bound<'py, PyAny>,
+        kh: Bound<'py, PyDict>,
+        hk: Bound<'py, PyDict>,
     ) {
         let wrapper = &mut PyCache {
             list: cache,
@@ -176,13 +176,13 @@ impl TlfuCore {
             .access(key, &self.wheel.clock, &mut self.metadata)
     }
 
-    pub fn advance(
+    pub fn advance<'py>(
         &mut self,
         _py: Python,
-        cache: &PyList,
-        sentinel: &PyAny,
-        kh: &PyDict,
-        hk: &PyDict,
+        cache: Bound<'py, PyList>,
+        sentinel: &'py Bound<'py, PyAny>,
+        kh: Bound<'py, PyDict>,
+        hk: Bound<'py, PyDict>,
     ) {
         let wrapper = &mut PyCache {
             list: cache,
@@ -264,13 +264,13 @@ impl LruCore {
         None
     }
 
-    pub fn advance(
+    pub fn advance<'py>(
         &mut self,
         _py: Python,
-        cache: &PyList,
-        sentinel: &PyAny,
-        kh: &PyDict,
-        hk: &PyDict,
+        cache: Bound<'py, PyList>,
+        sentinel: &'py Bound<'py, PyAny>,
+        kh: Bound<'py, PyDict>,
+        hk: Bound<'py, PyDict>,
     ) {
         let wrapper = &mut PyCache {
             list: cache,
