@@ -9,7 +9,7 @@ mod timerwheel;
 mod tlfu;
 
 #[pymodule]
-fn theine_core(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn theine_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<core::TlfuCore>()?;
     m.add_class::<filter::BloomFilter>()?;
     m.add_function(wrap_pyfunction!(core::spread, m)?)?;
