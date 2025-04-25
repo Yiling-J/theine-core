@@ -75,14 +75,14 @@ impl TinyLfu {
 
         // try move from protected/probation to window
         loop {
+            if amount <= 0 {
+                break;
+            }
             let mut key = self.main.probation.tail();
             if key.is_none() {
                 key = self.main.protected.tail()
             }
             if key.is_none() {
-                break;
-            }
-            if amount <= 0 {
                 break;
             }
             amount -= 1;
@@ -100,11 +100,11 @@ impl TinyLfu {
 
         // try move from window to probation
         loop {
-            let key = self.window.list.tail();
-            if key.is_none() {
+            if amount <= 0 {
                 break;
             }
-            if amount <= 0 {
+            let key = self.window.list.tail();
+            if key.is_none() {
                 break;
             }
             amount -= 1;
@@ -169,12 +169,15 @@ impl TinyLfu {
         if self.hit_in_sample + self.misses_in_sample == 0 {
             delta = 0.0;
         } else {
-            let sample_hr = self.hit_in_sample as f32 / self.misses_in_sample as f32;
+            let sample_hr =
+                self.hit_in_sample as f32 / (self.misses_in_sample + self.hit_in_sample) as f32;
             delta = sample_hr - self.hr;
             self.hr = sample_hr;
         }
+        self.hit_in_sample = 0;
+        self.misses_in_sample = 0;
 
-        let amount = if delta > 0.0 { self.step } else { -self.step };
+        let amount = if delta >= 0.0 { self.step } else { -self.step };
 
         let mut next_step_size = amount * HILL_CLIMBER_STEP_DECAY_RATE;
         if delta.abs() >= 0.05 {
@@ -189,8 +192,8 @@ impl TinyLfu {
         self.amount = amount as isize;
 
         // decrease protected, min protected is 0
-        if self.amount > 0 && self.amount as usize > (self.window.list.capacity - 1) {
-            self.amount = self.window.list.capacity as isize;
+        if self.amount > 0 && self.amount as usize > self.main.protected.list.capacity() {
+            self.amount = self.main.protected.list.capacity() as isize;
         }
 
         if self.amount < 0 && self.amount.unsigned_abs() > (self.window.list.capacity - 1) {
@@ -211,6 +214,7 @@ impl TinyLfu {
                 self.misses_in_sample += 1;
                 self.window.insert(key, entry);
                 self.size += 1;
+                self.sketch.add(key);
             }
         }
 
@@ -227,6 +231,7 @@ impl TinyLfu {
         self.sketch.add(key);
 
         if let Some(entry) = entries.get_mut(&key) {
+            self.hit_in_sample += 1;
             if entry.expire != 0 && entry.expire <= clock.now_ns() {
                 return;
             }
