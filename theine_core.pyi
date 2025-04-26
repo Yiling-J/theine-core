@@ -1,5 +1,11 @@
 from typing import Optional, List, Tuple
 
+class CoreDebugInfo:
+    len: int
+    window_len: int
+    probation_len: int
+    protected_len: int
+
 class TlfuCore:
     """
     A Python class representing the TlfuCore Rust struct.
@@ -61,6 +67,14 @@ class TlfuCore:
         Returns the number of entries currently in the cache.
 
         :return: The number of entries.
+        """
+        ...
+
+    def debug_info(self) -> CoreDebugInfo:
+        """
+        Returns the debug info of core.
+
+        :return: Debug info.
         """
         ...
 

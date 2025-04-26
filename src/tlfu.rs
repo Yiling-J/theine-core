@@ -3,6 +3,7 @@ use crate::lru::Slru;
 use crate::metadata::Entry;
 use crate::sketch::CountMinSketch;
 use crate::timerwheel::Clock;
+use pyo3::prelude::pyclass;
 use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -397,6 +398,27 @@ impl TinyLfu {
             false
         }
     }
+
+    pub fn debug_info(&self) -> DebugInfo {
+        DebugInfo {
+            len: self.len(),
+            window_len: self.window.len(),
+            probation_len: self.main.probation.len(),
+            protected_len: self.main.protected.len(),
+        }
+    }
+}
+
+#[pyclass]
+pub struct DebugInfo {
+    #[pyo3(get)]
+    len: usize,
+    #[pyo3(get)]
+    window_len: usize,
+    #[pyo3(get)]
+    probation_len: usize,
+    #[pyo3(get)]
+    protected_len: usize,
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use crate::{metadata::Entry, timerwheel::TimerWheel, tlfu::TinyLfu};
+use crate::{metadata::Entry, timerwheel::TimerWheel, tlfu::DebugInfo, tlfu::TinyLfu};
 use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
@@ -118,6 +118,10 @@ impl TlfuCore {
 
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    pub fn debug_info(&self) -> DebugInfo {
+        self.policy.debug_info()
     }
 }
 
