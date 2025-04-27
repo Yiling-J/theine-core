@@ -8,7 +8,7 @@ mod sketch;
 mod timerwheel;
 mod tlfu;
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn theine_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<core::TlfuCore>()?;
     m.add_class::<filter::BloomFilter>()?;
