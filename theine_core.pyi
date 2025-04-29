@@ -78,6 +78,14 @@ class TlfuCore:
         """
         ...
 
+    def keys(self) -> List[int]:
+        """
+        Returns all keys, used in test only.
+
+        :return: Keys list.
+        """
+        ...
+
 def spread(h: int) -> int:
     """
     Applies a supplemental hash function to a given hash value.

@@ -123,6 +123,10 @@ impl TlfuCore {
     pub fn debug_info(&self) -> DebugInfo {
         self.policy.debug_info()
     }
+
+    pub fn keys(&self) -> Vec<u64> {
+        self.entries.keys().copied().collect()
+    }
 }
 
 #[pyfunction]
