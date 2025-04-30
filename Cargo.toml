@@ -1,17 +1,16 @@
 [package]
 name = "theine_core"
-version = "0.5.0"
+version = "2.0.0-rc1"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "theine_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-ahash = "0.8.2"
-compact_str = "0.7.0"
-pyo3 = { version = "0.23.5", features = ["extension-module"] }
+dlv-list = "0.5.2"
+pyo3 = { version = "0.24.2", features = ["extension-module"] }
+rand = "0.8.5"
 
 [dev-dependencies]
-rand = "0.8.5"
+ahash = "0.8.11"

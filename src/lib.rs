@@ -1,19 +1,17 @@
 use pyo3::prelude::*;
-mod clockpro;
+use pyo3::wrap_pyfunction;
 mod core;
 mod filter;
 mod lru;
 mod metadata;
-mod policy;
 mod sketch;
 mod timerwheel;
 mod tlfu;
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn theine_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<core::TlfuCore>()?;
-    m.add_class::<core::LruCore>()?;
-    m.add_class::<core::ClockProCore>()?;
     m.add_class::<filter::BloomFilter>()?;
+    m.add_function(wrap_pyfunction!(core::spread, m)?)?;
     Ok(())
 }

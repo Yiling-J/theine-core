@@ -1,331 +1,199 @@
-use crate::{
-    clockpro::ClockPro,
-    lru::Lru,
-    metadata::MetaData,
-    policy::Policy,
-    timerwheel::{Cache, TimerWheel},
-    tlfu::TinyLfu,
-};
-use pyo3::{
-    prelude::*,
-    types::{PyDict, PyDictMethods, PyList, PyListMethods},
-};
+use crate::{metadata::Entry, timerwheel::TimerWheel, tlfu::DebugInfo, tlfu::TinyLfu};
+use std::collections::{HashMap, HashSet};
 
-struct PyCache<'py> {
-    list: Bound<'py, PyList>,
-    kh: Bound<'py, PyDict>,
-    hk: Bound<'py, PyDict>,
-    sentinel: &'py Bound<'py, PyAny>,
-}
-
-impl<'a> Cache for PyCache<'a> {
-    fn del_item(&mut self, key: &str, index: u32) {
-        let _ = self.list.set_item(index as usize, self.sentinel);
-        if let Some(nkey) = key.strip_prefix("_auto:") {
-            let num: u64 = nkey.parse().unwrap();
-            if let Some(keyh) = self.kh.get_item(num).ok() {
-                let _ = self.kh.del_item(num);
-                let _ = self.hk.del_item(keyh);
-            }
-        }
-    }
-}
+use pyo3::prelude::*;
 
 #[pyclass]
 pub struct TlfuCore {
     pub policy: TinyLfu,
     pub wheel: TimerWheel,
-    pub metadata: MetaData,
-}
-
-#[pyclass]
-pub struct LruCore {
-    policy: Lru,
-    wheel: TimerWheel,
-    metadata: MetaData,
-}
-
-#[pyclass]
-pub struct ClockProCore {
-    policy: ClockPro,
-    wheel: TimerWheel,
-    metadata: MetaData,
+    pub entries: HashMap<u64, Entry>,
 }
 
 #[pymethods]
-impl ClockProCore {
-    #[new]
-    pub fn new(size: usize) -> Self {
-        let mut metadata = MetaData::new(size * 2);
-        Self {
-            policy: ClockPro::new(size, &mut metadata),
-            wheel: TimerWheel::new(size * 2, &mut metadata),
-            metadata,
-        }
-    }
-
-    pub fn set(&mut self, key: &str, ttl: u128) -> (u32, Option<u32>, Option<u32>, Option<String>) {
-        let entry = self.metadata.get_or_create(key);
-        entry.expire = self.wheel.clock.expire_ns(ttl);
-        let index = entry.index;
-        let mut removed_index = None;
-        let mut removed_key = None;
-        self.wheel.schedule(index, &mut self.metadata);
-        // test page, remove from Python value list only, removed page, remove all
-        let (test, removed) = self.policy.set(index, &mut self.metadata);
-        let test_index = test;
-        if let Some(i) = removed {
-            let entry = &self.metadata.data[i as usize];
-            removed_key = Some(entry.key.to_string());
-            removed_index = Some(i);
-            self.wheel.deschedule(i, &mut self.metadata);
-            self.metadata.remove(i);
-        }
-        (index, test_index, removed_index, removed_key)
-    }
-
-    pub fn remove(&mut self, key: &str) -> Option<u32> {
-        if let Some(entry) = self.metadata.get(key) {
-            self.wheel.deschedule(entry, &mut self.metadata);
-            self.policy.remove(entry, &mut self.metadata);
-            self.metadata.remove(entry);
-            return Some(entry);
-        }
-        None
-    }
-
-    pub fn access(&mut self, key: &str) -> Option<u32> {
-        self.policy
-            .access(key, &self.wheel.clock, &mut self.metadata)
-    }
-
-    pub fn advance<'py>(
-        &mut self,
-        _py: Python,
-        cache: Bound<'py, PyList>,
-        sentinel: &'py Bound<'py, PyAny>,
-        kh: Bound<'py, PyDict>,
-        hk: Bound<'py, PyDict>,
-    ) {
-        let wrapper = &mut PyCache {
-            list: cache,
-            kh,
-            hk,
-            sentinel,
-        };
-        self.wheel.advance(
-            self.wheel.clock.now_ns(),
-            wrapper,
-            &mut self.policy,
-            &mut self.metadata,
-        );
-    }
-
-    pub fn clear(&mut self) {
-        self.wheel.clear(&mut self.metadata);
-        self.metadata.clear();
-    }
-
-    pub fn len(&self) -> usize {
-        self.policy.len()
-    }
-}
-
-#[pymethods]
+// None of the methods in this implementation are thread-safe. Please ensure that you use the appropriate mutex on the caller side.
 impl TlfuCore {
     #[new]
     pub fn new(size: usize) -> Self {
-        let mut metadata = MetaData::new(size);
         Self {
-            policy: TinyLfu::new(size, &mut metadata),
-            wheel: TimerWheel::new(size, &mut metadata),
-            metadata,
+            policy: TinyLfu::new(size),
+            wheel: TimerWheel::new(),
+            entries: HashMap::with_capacity(size),
         }
     }
 
-    pub fn set(&mut self, key: &str, ttl: u128) -> (u32, Option<u32>, Option<String>) {
-        let entry = self.metadata.get_or_create(key);
+    fn set_entry(&mut self, key: u64, ttl: u64) -> Option<u64> {
+        // update
+        if let Some(exist) = self.entries.get_mut(&key) {
+            exist.expire = self.wheel.clock.expire_ns(ttl);
+            self.wheel.schedule(key, exist);
+            return None;
+        }
+
+        // create
+        let mut entry = Entry::new();
         entry.expire = self.wheel.clock.expire_ns(ttl);
-        let index = entry.index;
-        let mut evicted_index = 0;
-        self.wheel.schedule(index, &mut self.metadata);
-        if let Some(evicted) = self.policy.set(index, &mut self.metadata) {
-            self.wheel.deschedule(evicted, &mut self.metadata);
-            self.metadata.remove(evicted);
-            evicted_index = evicted;
+        self.wheel.schedule(key, &mut entry);
+        self.entries.insert(key, entry);
+
+        if let Some(evicted_key) = self.policy.set(key, &mut self.entries) {
+            if let Some(evicted) = self.entries.get_mut(&evicted_key) {
+                self.wheel.deschedule(evicted);
+                self.entries.remove(&evicted_key);
+                Some(evicted_key)
+            } else {
+                None
+            }
+        } else {
+            None
         }
-        if evicted_index > 0 {
-            let evicted = &self.metadata.data[evicted_index as usize];
-            return (index, Some(evicted.index), Some(evicted.key.to_string()));
-        }
-        (index, None, None)
     }
 
-    pub fn remove(&mut self, key: &str) -> Option<u32> {
-        if let Some(entry) = self.metadata.get(key) {
-            self.wheel.deschedule(entry, &mut self.metadata);
-            self.policy.remove(entry, &mut self.metadata);
-            self.metadata.remove(entry);
-            return Some(entry);
+    pub fn set(&mut self, entries: Vec<(u64, i64)>) -> Vec<u64> {
+        let mut evicted = HashSet::new();
+        for entry in entries.iter() {
+            // remove entry
+            if entry.1 == -1 {
+                if let Some(mut removed) = self.entries.remove(&entry.0) {
+                    self.policy.remove(&mut removed);
+                    self.wheel.deschedule(&mut removed);
+                }
+                continue;
+            }
+
+            if evicted.contains(&entry.0) {
+                evicted.remove(&entry.0);
+            }
+            let ev = self.set_entry(entry.0, entry.1.unsigned_abs());
+            if let Some(key) = ev {
+                evicted.insert(key);
+            }
+        }
+
+        for ev in &evicted {
+            self.entries.remove(ev);
+        }
+
+        Vec::from_iter(evicted)
+    }
+
+    pub fn remove(&mut self, key: u64) -> Option<u64> {
+        if let Some(entry) = self.entries.get_mut(&key) {
+            self.wheel.deschedule(entry);
+            self.policy.remove(entry);
+            self.entries.remove(&key);
+            return Some(key);
         }
         None
     }
 
-    pub fn access(&mut self, key: &str) -> Option<u32> {
-        self.policy
-            .access(key, &self.wheel.clock, &mut self.metadata)
+    pub fn access(&mut self, keys: Vec<u64>) {
+        for key in keys {
+            self.access_entry(key);
+        }
     }
 
-    pub fn advance<'py>(
-        &mut self,
-        _py: Python,
-        cache: Bound<'py, PyList>,
-        sentinel: &'py Bound<'py, PyAny>,
-        kh: Bound<'py, PyDict>,
-        hk: Bound<'py, PyDict>,
-    ) {
-        let wrapper = &mut PyCache {
-            list: cache,
-            kh,
-            hk,
-            sentinel,
-        };
-        self.wheel.advance(
-            self.wheel.clock.now_ns(),
-            wrapper,
-            &mut self.policy,
-            &mut self.metadata,
-        );
+    fn access_entry(&mut self, key: u64) {
+        self.policy
+            .access(key, &self.wheel.clock, &mut self.entries);
+    }
+
+    pub fn advance(&mut self) -> Vec<u64> {
+        let removed = self
+            .wheel
+            .advance(self.wheel.clock.now_ns(), &mut self.entries);
+        for key in removed.iter() {
+            if let Some(entry) = self.entries.get_mut(key) {
+                self.policy.remove(entry);
+                self.entries.remove(key);
+            }
+        }
+        removed
     }
 
     pub fn clear(&mut self) {
-        self.wheel.clear(&mut self.metadata);
-        self.metadata.clear();
+        self.wheel.clear();
+        self.entries.clear();
     }
 
     pub fn len(&self) -> usize {
-        self.metadata.len()
+        self.entries.len()
+    }
+
+    pub fn debug_info(&self) -> DebugInfo {
+        self.policy.debug_info()
+    }
+
+    pub fn keys(&self) -> Vec<u64> {
+        self.entries.keys().copied().collect()
     }
 }
 
-#[pymethods]
-impl LruCore {
-    #[new]
-    fn new(size: usize) -> Self {
-        let mut metadata = MetaData::new(size);
-        Self {
-            policy: Lru::new(size, &mut metadata),
-            wheel: TimerWheel::new(size, &mut metadata),
-            metadata,
-        }
-    }
-
-    pub fn set(&mut self, key: &str, ttl: u128) -> (u32, Option<u32>, Option<String>) {
-        let entry = self.metadata.get_or_create(key);
-        entry.expire = self.wheel.clock.expire_ns(ttl);
-        let index = entry.index;
-        let link_id = entry.link_id;
-        let mut evicted_index = 0;
-        self.wheel.schedule(index, &mut self.metadata);
-        // new entry, insert to policy
-        if link_id == 0 {
-            if let Some(evicted) = self.policy.insert(index, &mut self.metadata) {
-                self.wheel.deschedule(evicted, &mut self.metadata);
-                self.metadata.remove(evicted);
-                evicted_index = evicted;
-            }
-            if evicted_index > 0 {
-                let evicted = &self.metadata.data[evicted_index as usize];
-                return (index, Some(evicted.index), Some(evicted.key.to_string()));
-            }
-        }
-        (index, None, None)
-    }
-
-    pub fn remove(&mut self, key: &str) -> Option<u32> {
-        if let Some(index) = self.metadata.get(key) {
-            self.wheel.deschedule(index, &mut self.metadata);
-            self.policy.remove(index, &mut self.metadata);
-            self.metadata.remove(index);
-            return Some(index);
-        }
-        None
-    }
-
-    pub fn access(&mut self, key: &str) -> Option<u32> {
-        if let Some(index) = self.metadata.get(key) {
-            let entry = &self.metadata.data[index as usize];
-            if entry.expire != 0 && entry.expire <= self.wheel.clock.now_ns() {
-                return None;
-            }
-            self.policy.access(index, &mut self.metadata);
-            return Some(index);
-        }
-        None
-    }
-
-    pub fn advance<'py>(
-        &mut self,
-        _py: Python,
-        cache: Bound<'py, PyList>,
-        sentinel: &'py Bound<'py, PyAny>,
-        kh: Bound<'py, PyDict>,
-        hk: Bound<'py, PyDict>,
-    ) {
-        let wrapper = &mut PyCache {
-            list: cache,
-            kh,
-            hk,
-            sentinel,
-        };
-        self.wheel.advance(
-            self.wheel.clock.now_ns(),
-            wrapper,
-            &mut self.policy,
-            &mut self.metadata,
-        );
-    }
-
-    pub fn clear(&mut self) {
-        self.wheel.clear(&mut self.metadata);
-        self.metadata.clear();
-    }
-
-    pub fn len(&self) -> usize {
-        self.metadata.len()
-    }
+#[pyfunction]
+/// Applies a supplemental hash function to a given hash,
+/// Python's hash function returns i64, which could be negative
+pub fn spread(h: i64) -> u64 {
+    let mut z = u64::from_ne_bytes(h.to_ne_bytes());
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+    z = z ^ (z >> 31);
+    z
 }
 
 #[cfg(test)]
 mod tests {
+
+    use crate::core::spread;
+    use rand::Rng;
+
     use crate::core::TlfuCore;
 
-    use super::LruCore;
-
     #[test]
-    fn test_lru_core() {
-        let mut lru = LruCore::new(5);
-        for s in ["a", "b", "c", "d", "e", "f", "g", "g", "g"] {
-            lru.set(s, 0);
-        }
-        assert_eq!("gfedc", lru.policy.link.display(true, &lru.metadata));
-        assert_eq!("cdefg", lru.policy.link.display(false, &lru.metadata));
-        assert_eq!(5, lru.metadata.len());
+    fn test_set() {
+        let mut tlfu = TlfuCore::new(1000);
+        tlfu.set(vec![(1, 0), (2, 0), (3, 0)]);
+        let mut s = tlfu.entries.keys().cloned().collect::<Vec<_>>();
+        s.sort();
+        assert_eq!(vec![1, 2, 3], s);
+        tlfu.set(vec![(3, -1), (4, 0), (3, 0)]);
+        s = tlfu.entries.keys().cloned().collect::<Vec<_>>();
+        s.sort();
+        assert_eq!(vec![1, 2, 3, 4], s);
+        tlfu.set(vec![(3, -1), (4, 0)]);
+        s = tlfu.entries.keys().cloned().collect::<Vec<_>>();
+        s.sort();
+        assert_eq!(vec![1, 2, 4], s);
     }
 
     #[test]
-    fn test_tlfu_core_size_small() {
+    fn test_remove() {
+        let mut tlfu = TlfuCore::new(1000);
+        tlfu.set(vec![(1, 0), (2, 0), (3, 0)]);
+        tlfu.remove(2);
+        let mut s = tlfu.entries.keys().cloned().collect::<Vec<_>>();
+        s.sort();
+        assert_eq!(vec![1, 3], s);
+    }
+
+    #[test]
+    fn test_size_small() {
         for size in [1, 2, 3] {
             let mut tlfu = TlfuCore::new(size);
-            for s in ["a", "b", "c", "d", "e", "f", "g", "h", "i"] {
-                tlfu.set(s, 0);
-            }
-            assert_eq!(size, tlfu.metadata.len());
-            tlfu.access("a");
-            for s in ["a", "b", "c", "d", "e", "f", "g", "h", "i"] {
-                tlfu.set(s, 0);
-            }
-            assert_eq!(size, tlfu.metadata.len());
+            tlfu.set(vec![(1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]);
+            assert_eq!(size, tlfu.entries.len());
+            tlfu.access(vec![1]);
+            tlfu.set(vec![(1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]);
+            assert_eq!(size, tlfu.entries.len());
+        }
+    }
+
+    #[test]
+    fn test_spread() {
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..500000 {
+            let k = rng.gen_range(-i64::MAX..i64::MAX);
+            spread(k);
         }
     }
 }
