@@ -155,7 +155,7 @@ impl TimerWheel {
         entries: &mut HashMap<u64, Entry>,
     ) -> Vec<u64> {
         let mask = (self.buckets[index] - 1) as u64;
-        let steps = cmp::min(delta as usize, self.buckets[index]);
+        let steps = cmp::min(delta as usize + 1, self.buckets[index]);
         let start = prev_ticks & mask;
         let end = start + steps as u64;
         let mut removed_all = Vec::new();
@@ -275,6 +275,44 @@ mod tests {
     }
 
     #[test]
+    fn test_advance_compact() {
+        use std::collections::HashMap;
+        use std::time::Duration;
+
+        let mut tw = TimerWheel::new();
+        let now = tw.clock.now_ns();
+        let mut entries = HashMap::new();
+
+        for i in 0..5_000_000 {
+            let mut entry = Entry::new();
+            entry.expire = now + Duration::from_secs((i + 1) as u64).as_nanos() as u64;
+            tw.schedule(i + 1, &mut entry);
+            entries.insert(i + 1, entry);
+        }
+
+        let mut evicted: Vec<u64> = Vec::new();
+        let mut prev = 0;
+        let mut counter = 0;
+
+        for second in 1..=5_000_005 {
+            let advanced_to = now + Duration::from_secs(second).as_nanos() as u64;
+            let expired_keys = tw.advance(advanced_to, &mut entries);
+            counter += expired_keys.len();
+            evicted.extend(expired_keys.clone());
+
+            let delta = counter - prev;
+            assert!(
+                (0..=2).contains(&delta),
+                "unexpected number of expirations: {}",
+                delta
+            );
+            prev = counter;
+        }
+
+        assert_eq!(evicted.len(), 5_000_000);
+    }
+
+    #[test]
     fn test_advance() {
         let mut tw = TimerWheel::new();
         let mut entries = HashMap::new();
@@ -302,7 +340,7 @@ mod tests {
         assert_eq!(expired, vec![1, 2, 3]);
 
         expired = tw.advance(
-            now + Duration::from_secs(200).as_nanos() as u64,
+            now + Duration::from_secs(121).as_nanos() as u64,
             &mut entries,
         );
         assert_eq!(expired, vec![4]);
