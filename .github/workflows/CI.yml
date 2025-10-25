@@ -44,25 +44,31 @@ jobs:
             target: ppc64le
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: |
-            3.9
             3.10
             3.11
             3.12
             3.13
+            3.14
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           manylinux: auto
-      - name: Build free-threaded wheels
+      - name: Build 3.13 free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist -i python3.13t
+          manylinux: auto
+      - name: Build 3.14 free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist -i python3.14t
           manylinux: auto
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -85,25 +91,31 @@ jobs:
             target: armv7
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: |
-            3.9
             3.10
             3.11
             3.12
             3.13
+            3.14
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           manylinux: musllinux_1_2
-      - name: Build free-threaded wheels
+      - name: Build 3.13 free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist -i python3.13t
+          manylinux: musllinux_1_2
+      - name: Build 3.14 free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist -i python3.14t
           manylinux: musllinux_1_2
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -122,29 +134,38 @@ jobs:
             target: x86
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: |
-            3.9
             3.10
             3.11
             3.12
             3.13
+            3.14
           architecture: ${{ matrix.platform.target }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: 3.13t
           architecture: ${{ matrix.platform.target }}
-      - name: Build free-threaded wheels
+      - name: Build 3.13 free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist -i python3.13t
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.14t
+          architecture: ${{ matrix.platform.target }}
+      - name: Build 3.14 free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist -i python3.14t
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -162,24 +183,29 @@ jobs:
             target: aarch64
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: |
-            3.9
             3.10
             3.11
             3.12
             3.13
+            3.14
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
-      - name: Build free-threaded wheels
+      - name: Build 3.13 free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist -i python3.13t
+      - name: Build 3.14 free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist -i python3.14t
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:

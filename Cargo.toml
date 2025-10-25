@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 dlv-list = "0.5.2"
-pyo3 = { version = "0.24.2", features = ["extension-module"] }
+pyo3 = { version = "0.27.1", features = ["extension-module"] }
 rand = "0.8.5"
 
 [dev-dependencies]
