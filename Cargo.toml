@@ -1,16 +1,18 @@
 [package]
 name = "theine_core"
 version = "2.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "theine_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-dlv-list = "0.5.2"
+anyhow = "1.0"
+dlv-list = "0.6"
 pyo3 = { version = "0.27.1", features = ["extension-module"] }
-rand = "0.8.5"
+log = "0.4"
+rand = "0.9"
 
 [dev-dependencies]
 ahash = "0.8.11"

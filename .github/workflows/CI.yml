@@ -6,12 +6,12 @@ on:
       - main
       - master
     tags:
-      - '*'
+      - "*"
   pull_request:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'tag'
+        description: "tag"
 
 jobs:
   test:
@@ -21,6 +21,13 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Python development headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-dev
       - uses: actions-rs/cargo@v1
         with:
           command: test
@@ -220,7 +227,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          subject-path: 'wheels-*/*'
+          subject-path: "wheels-*/*"
       - name: Publish to PyPI
         uses: PyO3/maturin-action@v1
         env:
